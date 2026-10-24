@@ -1,30 +1,40 @@
 (function(){
   'use strict';
 
-  // ===== CONFIG SUPABASE =====
-  // Troque pelos dados do seu projeto (Project Settings → API)
-  var SUPABASE_URL  = 'https://ucinnkobjqlhxaobmdbp.supabase.co';
+  // ==========================================
+  // 1. CONFIGURAÇÃO DO SUPABASE
+  // ==========================================
+  var SUPABASE_URL = 'https://ucinnkobjqlhxaobmdbp.supabase.co';
   var SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVjaW5ua29ianFsaHhhb2JtZGJwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI4MzIzNjQsImV4cCI6MjEwODQwODM2NH0.N0w2ddm7WoUZU6F_dYT46gsIBFCsWC14ZzwTo3eLQmg';
-  var TEAM_ID       = 'equipe-ti-filipe'; // mesmo id do INSERT do SQL
+  
+  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
 
-  var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+  // ==========================================
+  // 2. VARIÁVEIS DE ESTADO GLOBAL
+  // ==========================================
+  let currentUser = null;
+  let currentTeam = null; 
+  let userTeams = [];
+  
+  // Variáveis de sincronização
+  let _syncState = 'idle'; // 'idle' | 'pending' | 'saving' | 'synced' | 'error'
+  let _lastSyncTime = null;
+  let pendingSave = false;
+  let _saving = false;
+  let saveTimer = null;
+  let realtimeChannel = null;
+  let state = {}; // O estado da escala em si
 
-  // Estado de sincronização (usado no Ajustes → "Sincronização com a nuvem")
-  var _syncState = 'idle';     // 'idle' | 'pending' | 'saving' | 'synced' | 'error'
-  var _lastSyncTime = null;
-  var pendingSave = false;
-  var _saving = false;
-  var saveTimer = null;
+  const DOW = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+  const MONTHS = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+  const REST_11H = 660;
 
-  var DOW = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
-  var MONTHS = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
-  var STORAGE_KEY = 'escala.v4';
-  var LEGACY_KEY = 'escala.v3';
-  var REST_11H = 660;
-
+  // ==========================================
+  // 3. LÓGICA DE ESTADO E PERSISTÊNCIA
+  // ==========================================
   function getDefaultState(){
     return {
-      teamName: 'Equipe TI',
+      teamName: currentTeam ? currentTeam.name : 'Nova Equipe',
       employees: ['Filipe','Lucas','Nathan','Valtecir'],
       shifts: {
         '06:00': { type:'work', label:'06', name:'06:00 – 14:20', start:'06:00', end:'14:20', color:'#f1f5f9', text:'#0f172a' },
@@ -46,154 +56,341 @@
       schedule: {},
       holidays: {},
       colors: { SUNDAY: { color:'#ef4444', text:'#ffffff' } },
-      sundayRule: {
-        maxWorkers: 2,
-        maxConsecutive: 2
-      }
+      sundayRule: { maxWorkers: 2, maxConsecutive: 2 }
     };
   }
 
   function migrateState(raw){
     var defaults = getDefaultState();
     var s = Object.assign({}, defaults, raw || {});
-    if (!raw || !raw.teamName) s.teamName = defaults.teamName;
-    if (!raw || !raw.employees) s.employees = defaults.employees;
-    if (!raw || !raw.shifts) s.shifts = defaults.shifts;
-
-    if (raw && raw.colors && !raw.shifts){
-      ['D','F6','F','x','FE'].forEach(function(code){
-        if (raw.colors[code] && s.shifts[code]){
-          s.shifts[code].color = raw.colors[code].color;
-          s.shifts[code].text = raw.colors[code].text;
-        }
-      });
-    }
-
+    if (!s.employees) s.employees = defaults.employees;
+    if (!s.shifts) s.shifts = defaults.shifts;
     if (!s.colors) s.colors = {};
     if (!s.colors.SUNDAY) s.colors.SUNDAY = { color:'#ef4444', text:'#ffffff' };
     if (!s.defaultShift) s.defaultShift = {};
-
-    s.employees.forEach(function(emp){
-      if (!s.defaultShift[emp]){
-        var first = Object.keys(s.shifts).find(function(k){ return s.shifts[k].type === 'work'; });
-        if (first) s.defaultShift[emp] = first;
-      }
-    });
-
-    if (s.colors) ['D','F6','F','x','FE'].forEach(function(code){ delete s.colors[code]; });
-
-    if (!s.sundayRule || !s.sundayRule.maxWorkers) {
-      s.sundayRule = { maxWorkers: 2, maxConsecutive: 2 };
-    } else {
-      delete s.sundayRule.teamA;
-      delete s.sundayRule.teamB;
-      delete s.sundayRule.cycleA;
-      delete s.sundayRule.cycleB;
-      delete s.sundayRule.shiftA;
-      delete s.sundayRule.shiftB;
-    }
-
     if (!s.employeeScale) s.employeeScale = {};
-    s.employees.forEach(function(emp){
-      if (!s.employeeScale[emp]) s.employeeScale[emp] = '6x1';
-    });
-    Object.keys(s.employeeScale).forEach(function(emp){
-      if (s.employees.indexOf(emp) === -1) delete s.employeeScale[emp];
-    });
-
-    Object.keys(s.defaultShift).forEach(function(emp){
-      if (s.employees.indexOf(emp) === -1){ delete s.defaultShift[emp]; return; }
-      if (!s.shifts[s.defaultShift[emp]]){
-        var first = Object.keys(s.shifts).find(function(k){ return s.shifts[k].type === 'work'; });
-        if (first) s.defaultShift[emp] = first;
-      }
-    });
-
+    if (!s.sundayRule) s.sundayRule = { maxWorkers: 2, maxConsecutive: 2 };
     return s;
   }
 
-    var state = getDefaultState();
-  // O carregamento real acontece de forma assíncrona em loadState() (ver initApp)
+  async function loadState() {
+    if (!currentTeam) return;
+    _syncState = 'saving'; updateStorageStatus();
+    try {
+      const { data, error } = await sb.from('escala').select('data').eq('team_id', currentTeam.id).maybeSingle();
+      if (error) throw error;
+      
+      if (data && data.data && Object.keys(data.data).length > 0) {
+        state = migrateState(data.data);
+      } else {
+        state = getDefaultState();
+        await doSave(); // Cria a linha se não existir
+      }
+      _syncState = 'synced';
+      _lastSyncTime = new Date();
+    } catch (e) {
+      console.error(e);
+      _syncState = 'error';
+      toast('Erro ao carregar escala da nuvem.');
+      state = getDefaultState();
+    }
+    updateStorageStatus();
+  }
 
-  // ===== SALVAMENTO NA NUVEM (Supabase, com debounce) =====
-  function save(){
+  function save() {
+    if (!currentTeam) return;
     pendingSave = true;
     _syncState = 'pending';
     updateStorageStatus();
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(function(){ doSave(); }, 600);
+    saveTimer = setTimeout(doSave, 600);
   }
 
-  async function doSave(){
-    if (!pendingSave || _saving) return;
+  async function doSave() {
+    if (!pendingSave || _saving || !currentTeam) return;
     pendingSave = false;
     _saving = true;
     _syncState = 'saving';
     updateStorageStatus();
+    
     try {
-      var res = await sb.from('escala').upsert({
-        id: TEAM_ID,
+      const { error } = await sb.from('escala').upsert({
+        team_id: currentTeam.id,
         data: state,
         updated_at: new Date().toISOString()
       });
-      if (res.error) throw res.error;
+      if (error) throw error;
       _lastSyncTime = new Date();
       _syncState = 'synced';
-      updateStorageStatus();
-    } catch(e){
-      console.error('Erro ao salvar na nuvem:', e);
+    } catch (e) {
+      console.error('Erro ao salvar:', e);
       _syncState = 'error';
-      updateStorageStatus();
       pendingSave = true;
       clearTimeout(saveTimer);
-      saveTimer = setTimeout(function(){ doSave(); }, 5000); // retry 5s
+      saveTimer = setTimeout(doSave, 5000); // Tenta de novo em 5s
     } finally {
       _saving = false;
+      updateStorageStatus();
     }
   }
 
-    function updateStorageStatus(mode){
+  function updateStorageStatus(mode) {
     if (mode) _syncState = mode;
     var el = document.getElementById('storageStatus');
     if (!el) return;
     var now = _lastSyncTime || new Date();
-    var timeStr = pad(now.getHours()) + ':' + pad(now.getMinutes());
+    var timeStr = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
 
-    if (_syncState === 'pending'){
-      el.textContent = '⟳ Alterações pendentes';
-      el.style.background = '#fef3c7';
-      el.style.color = '#92400e';
-    } else if (_syncState === 'saving'){
-      el.textContent = '⟳ Sincronizando...';
-      el.style.background = '#fef3c7';
-      el.style.color = '#92400e';
-    } else if (_syncState === 'synced'){
-      el.textContent = '✓ Nuvem · ' + timeStr;
-      el.style.background = '#dcfce7';
-      el.style.color = '#166534';
-    } else if (_syncState === 'error'){
-      el.textContent = '✗ Erro de sincronização';
-      el.style.background = '#fee2e2';
-      el.style.color = '#991b1b';
+    if (_syncState === 'pending') { el.textContent = '⟳ Alterações pendentes'; el.style.background = '#fef3c7'; el.style.color = '#92400e'; }
+    else if (_syncState === 'saving') { el.textContent = '⟳ Sincronizando...'; el.style.background = '#fef3c7'; el.style.color = '#92400e'; }
+    else if (_syncState === 'synced') { el.textContent = '✓ Nuvem · ' + timeStr; el.style.background = '#dcfce7'; el.style.color = '#166534'; }
+    else if (_syncState === 'error') { el.textContent = '✗ Erro de sincronização'; el.style.background = '#fee2e2'; el.style.color = '#991b1b'; }
+    else { el.textContent = '—'; el.style.background = '#f1f5f9'; el.style.color = '#475569'; }
+  }
+
+  // ==========================================
+  // 4. AUTENTICAÇÃO E TIMES (UI E LÓGICA)
+  // ==========================================
+  function updateHeaderUI() {
+    const isApp = (currentUser && currentTeam);
+    document.querySelector('.period-row').style.display = isApp ? 'flex' : 'none';
+    document.querySelector('.tabs').style.display = isApp ? 'flex' : 'none';
+    document.getElementById('printBtn').style.display = isApp ? 'grid' : 'none';
+    
+    if (currentTeam) {
+      document.getElementById('teamNameDisplay').textContent = currentTeam.name;
+      document.title = currentTeam.name + ' · Escala';
     } else {
-      el.textContent = '—';
-      el.style.background = '#f1f5f9';
-      el.style.color = '#475569';
+      document.getElementById('teamNameDisplay').textContent = 'Gerenciador de Escalas';
+      document.title = 'Gerenciador de Escalas';
     }
   }
 
-  // Flush de alterações pendentes ao sair/ocultar a aba
-  document.addEventListener('visibilitychange', function(){
-    if (document.visibilityState === 'hidden' && pendingSave){
-      clearTimeout(saveTimer);
-      doSave();
+  function renderAuthScreen() {
+    document.getElementById('view-week').innerHTML = `
+      <div style="max-width:400px;margin:40px auto;padding:20px;background:#fff;border-radius:14px;box-shadow:var(--shadow-md);border:1px solid var(--border);">
+        <h2 style="text-align:center;margin-top:0;">Acessar Sistema</h2>
+        <div style="margin-bottom:12px;">
+          <label style="font-size:12px;font-weight:600;">E-mail</label>
+          <input type="email" id="authEmail" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;margin-top:4px;">
+        </div>
+        <div style="margin-bottom:12px;" id="nameField" class="hidden">
+          <label style="font-size:12px;font-weight:600;">Nome do Líder</label>
+          <input type="text" id="authName" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;margin-top:4px;">
+        </div>
+        <div style="margin-bottom:20px;">
+          <label style="font-size:12px;font-weight:600;">Senha</label>
+          <input type="password" id="authPass" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;margin-top:4px;">
+        </div>
+        <button id="btnLogin" class="btn-auto" style="margin-bottom:10px;">Entrar</button>
+        <button id="btnSignUp" class="add-btn">Criar nova conta</button>
+        <div id="authError" style="color:var(--danger);font-size:12px;text-align:center;margin-top:10px;"></div>
+      </div>
+    `;
+    
+    let isRegistering = false;
+    const nameField = document.getElementById('nameField');
+    const btnLogin = document.getElementById('btnLogin');
+    const btnSignUp = document.getElementById('btnSignUp');
+    const errorDiv = document.getElementById('authError');
+
+    btnSignUp.addEventListener('click', () => {
+      isRegistering = !isRegistering;
+      nameField.style.display = isRegistering ? 'block' : 'none';
+      btnLogin.textContent = isRegistering ? 'Cadastrar' : 'Entrar';
+      btnSignUp.textContent = isRegistering ? 'Já tenho conta' : 'Criar nova conta';
+      errorDiv.textContent = '';
+    });
+
+    btnLogin.addEventListener('click', async () => {
+      const email = document.getElementById('authEmail').value;
+      const pass = document.getElementById('authPass').value;
+      const name = document.getElementById('authName').value;
+      
+      btnLogin.textContent = 'Aguarde...';
+      btnLogin.disabled = true;
+      errorDiv.textContent = '';
+
+      try {
+        if (isRegistering) {
+          const { error } = await sb.auth.signUp({ email, password: pass, options: { data: { full_name: name } } });
+          if (error) throw error;
+          toast('Conta criada! Verifique seu e-mail se necessário.');
+        } else {
+          const { error } = await sb.auth.signInWithPassword({ email, password: pass });
+          if (error) throw error;
+        }
+      } catch (e) {
+        errorDiv.textContent = e.message;
+        btnLogin.textContent = isRegistering ? 'Cadastrar' : 'Entrar';
+        btnLogin.disabled = false;
+      }
+    });
+  }
+
+  async function fetchUserTeams() {
+    const { data, error } = await sb.from('team_members').select('team_id, teams(id, name)').eq('user_id', currentUser.id);
+    if (error) {
+      console.error(error);
+      return [];
     }
+    return data.map(d => d.teams);
+  }
+
+  function renderTeamSelection() {
+    let html = `<div style="max-width:600px;margin:40px auto;padding:20px;">
+      <h2 style="text-align:center;margin-bottom:20px;">Selecione seu Time</h2>
+      <div style="display:grid;gap:10px;margin-bottom:30px;">`;
+      
+    if (userTeams.length === 0) {
+      html += `<p style="text-align:center;color:#64748b;">Você ainda não participa de nenhum time.</p>`;
+    } else {
+      userTeams.forEach(t => {
+        html += `<button class="add-btn team-btn" data-id="${t.id}" data-name="${t.name}" style="justify-content:space-between;padding:15px;">
+          <span style="font-size:16px;font-weight:600;">${t.name}</span>
+          <span style="color:var(--primary);">Entrar →</span>
+        </button>`;
+      });
+    }
+    
+    html += `</div>
+      <div style="border-top:1px solid var(--border);padding-top:20px;text-align:center;">
+        <h3>Criar novo time</h3>
+        <div style="display:flex;gap:10px;margin-top:10px;">
+          <input type="text" id="newTeamName" placeholder="Nome do setor" style="flex:1;padding:10px;border:1px solid #cbd5e1;border-radius:8px;">
+          <button id="btnCreateTeam" class="btn-auto" style="width:auto;padding:0 20px;height:auto;">Criar</button>
+        </div>
+      </div>
+      <div style="text-align:center;margin-top:30px;">
+        <button id="btnLogout" style="color:var(--danger);font-size:12px;">Sair da conta</button>
+      </div>
+    </div>`;
+    
+    document.getElementById('view-week').innerHTML = html;
+
+    document.querySelectorAll('.team-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        currentTeam = { id: e.currentTarget.dataset.id, name: e.currentTarget.dataset.name };
+        await startApp();
+      });
+    });
+
+    document.getElementById('btnCreateTeam').addEventListener('click', async () => {
+      const name = document.getElementById('newTeamName').value.trim();
+      if (!name) return;
+      
+      const btn = document.getElementById('btnCreateTeam');
+      btn.textContent = 'Criando...'; btn.disabled = true;
+
+      try {
+        const { data: team, error: err1 } = await sb.from('teams').insert({ name, created_by: currentUser.id }).select().single();
+        if (err1) throw err1;
+
+        await sb.from('team_members').insert({ team_id: team.id, user_id: currentUser.id, role: 'admin' });
+        await sb.from('escala').insert({ team_id: team.id, data: getDefaultState() });
+        
+        currentTeam = team;
+        await startApp();
+      } catch (e) {
+        alert('Erro ao criar time: ' + e.message);
+        btn.textContent = 'Criar'; btn.disabled = false;
+      }
+    });
+
+    document.getElementById('btnLogout').addEventListener('click', () => sb.auth.signOut());
+  }
+
+  function setupRealtime() {
+    if (realtimeChannel) sb.removeChannel(realtimeChannel);
+    if (!currentTeam) return;
+
+    realtimeChannel = sb.channel('escala-' + currentTeam.id)
+      .on('postgres_changes', 
+        { event: 'UPDATE', schema: 'public', table: 'escala', filter: 'team_id=eq.' + currentTeam.id }, 
+        payload => {
+          if (!pendingSave && !_saving && payload.new.data) {
+            state = migrateState(payload.new.data);
+            renderActive();
+            _syncState = 'synced';
+            _lastSyncTime = new Date();
+            updateStorageStatus();
+            toast('✓ Sincronizado de outro dispositivo');
+          }
+        }
+      ).subscribe();
+  }
+
+  async function startApp() {
+    updateHeaderUI();
+    await loadState();
+    switchToView('week');
+    setupRealtime();
+  }
+
+  // ==========================================
+  // 5. INICIALIZAÇÃO DA APLICAÇÃO
+  // ==========================================
+  async function initApp() {
+    sb.auth.onAuthStateChange(async (event, session) => {
+      if (session) {
+        currentUser = session.user;
+        userTeams = await fetchUserTeams();
+        
+        // Se o usuário só tem 1 time, entra direto
+        if (userTeams.length === 1 && !currentTeam) {
+          currentTeam = userTeams[0];
+          await startApp();
+        } else if (!currentTeam) {
+          updateHeaderUI();
+          renderTeamSelection();
+        }
+      } else {
+        currentUser = null;
+        currentTeam = null;
+        updateHeaderUI();
+        renderAuthScreen();
+      }
+    });
+  }
+
+  // ==========================================
+  // 6. LÓGICA DO APP (CÓDIGO ORIGINAL ADAPTADO)
+  // ==========================================
+  var currentDate = new Date();
+  var activeView = 'week';
+
+  var $ = function(id){ return document.getElementById(id); };
+  var periodTitle = $('periodTitle'), tabsEl = $('tabs');
+  var viewWeek = $('view-week'), viewMonth = $('view-month'), viewSummary = $('view-summary'), viewSettings = $('view-settings');
+  var sheet = $('sheet'), sheetBackdrop = $('sheetBackdrop'), sheetTitle = $('sheetTitle'), sheetSub = $('sheetSub');
+  var workShiftGrid = $('workShiftGrid'), eventShiftGrid = $('eventShiftGrid'), sheetClear = $('sheetClear');
+  var workSectionTitle = $('workSectionTitle'), eventSectionTitle = $('eventSectionTitle');
+  var toastEl = $('toast');
+  var toastTimer;
+  
+  function toast(msg){ toastEl.textContent = msg; toastEl.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(function(){ toastEl.classList.remove('show'); }, 2600); }
+
+  var dialogCallback = null, dialogCancelCb = null;
+  function showDialog(opt){
+    $('dialogTitle').textContent = opt.title;
+    $('dialogBody').innerHTML = opt.body;
+    var btn = $('dialogConfirm');
+    btn.textContent = opt.confirmText || 'Confirmar';
+    btn.className = 'dialog-confirm' + (opt.isDanger === false ? ' primary' : '');
+    $('dialogCancel').textContent = opt.cancelText || 'Cancelar';
+    dialogCallback = opt.onConfirm || null;
+    dialogCancelCb = opt.onCancel || null;
+    $('dialogBackdrop').classList.add('open');
+  }
+  $('dialogConfirm').addEventListener('click', function(){
+    $('dialogBackdrop').classList.remove('open');
+    var cb = dialogCallback; dialogCallback = null; dialogCancelCb = null;
+    if (cb) cb();
   });
-  window.addEventListener('pagehide', function(){
-    if (pendingSave){
-      clearTimeout(saveTimer);
-      doSave();
-    }
+  $('dialogCancel').addEventListener('click', function(){
+    $('dialogBackdrop').classList.remove('open');
+    var cb = dialogCancelCb; dialogCallback = null; dialogCancelCb = null;
+    if (cb) cb();
   });
 
   function pad(n){ return String(n).padStart(2,'0'); }
@@ -202,7 +399,6 @@
   function daysInMonth(d){ return new Date(d.getFullYear(), d.getMonth()+1, 0).getDate(); }
   function isHoliday(k){ return !!state.holidays[k]; }
 
-  // ===== SEMANA SEGUNDA → DOMINGO =====
   function getWeekStart(d){
     var c = new Date(d);
     var day = c.getDay();
@@ -230,7 +426,6 @@
   function shiftNextMin(id){ var en = shiftEndMin(id); if (en === null) return null; return (en + REST_11H) % 1440; }
   function isValidTransition(prev, next){ if (!isWorkShift(prev) || !isWorkShift(next)) return true; return shiftStartMin(next) >= shiftNextMin(prev); }
 
-  // ===== ESCALA SEMANAL / FOLGAS =====
   function getEmployeeScale(emp){
     return state.employeeScale && state.employeeScale[emp] ? state.employeeScale[emp] : '6x1';
   }
@@ -245,10 +440,7 @@
       var d = new Date(weekStart);
       d.setDate(d.getDate() + i);
       var code = (state.schedule[keyOf(d)]||{})[emp];
-      if (!code) {
-        empty++;
-        continue;
-      }
+      if (!code) { empty++; continue; }
       planned = true;
       if (isWorkShift(code)) work++;
       else folgas++;
@@ -272,7 +464,6 @@
           if (req === 0) return;
           var info = getWeekFolgas(emp, ws);
           if (!info.planned) return;
-
           if (info.folgas + info.empty < req){
             warnings.push(emp + ': semana ' + pad(ws.getDate()) + '/' + pad(ws.getMonth()+1) +
               '–' + pad(we.getDate()) + '/' + pad(we.getMonth()+1) +
@@ -289,13 +480,11 @@
     var count = 0;
     var d = new Date(date + 'T00:00:00');
     if (d.getDay() !== 0) return 0;
-
     var checkDate = new Date(d);
     while (true) {
       var prev = new Date(checkDate); prev.setDate(prev.getDate() - 7);
-      if (isWorkShift((state.schedule[keyOf(prev)]||{})[emp])) {
-        checkDate = prev;
-      } else break;
+      if (isWorkShift((state.schedule[keyOf(prev)]||{})[emp])) checkDate = prev;
+      else break;
     }
     while (true) {
       if (isWorkShift((state.schedule[keyOf(checkDate)]||{})[emp])) {
@@ -309,17 +498,13 @@
   function getHolidayBalances(limitDate, excludeDate, excludeEmp){
     var b = {};
     state.employees.forEach(function(e){ b[e] = 0; });
-
     for (var date in state.schedule){
       if (!state.schedule.hasOwnProperty(date)) continue;
       if (limitDate && date > limitDate) continue;
-
       var daySch = state.schedule[date];
       var hol = isHoliday(date);
-
       state.employees.forEach(function(emp){
         if (date === excludeDate && emp === excludeEmp) return;
-
         var code = daySch[emp];
         if (!code) return;
         if (hol){ if (isWorkShift(code)) b[emp] += 1; }
@@ -338,56 +523,22 @@
     return false;
   }
 
-  var $ = function(id){ return document.getElementById(id); };
-  var periodTitle = $('periodTitle'), tabsEl = $('tabs');
-  var viewWeek = $('view-week'), viewMonth = $('view-month'), viewSummary = $('view-summary'), viewSettings = $('view-settings');
-  var sheet = $('sheet'), sheetBackdrop = $('sheetBackdrop'), sheetTitle = $('sheetTitle'), sheetSub = $('sheetSub');
-  var workShiftGrid = $('workShiftGrid'), eventShiftGrid = $('eventShiftGrid'), sheetClear = $('sheetClear');
-  var workSectionTitle = $('workSectionTitle'), eventSectionTitle = $('eventSectionTitle');
-  var toastEl = $('toast');
-  var toastTimer;
-  function toast(msg){ toastEl.textContent = msg; toastEl.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(function(){ toastEl.classList.remove('show'); }, 2600); }
-
-  var dialogCallback = null, dialogCancelCb = null;
-  function showDialog(opt){
-    $('dialogTitle').textContent = opt.title;
-    $('dialogBody').innerHTML = opt.body;
-    var btn = $('dialogConfirm');
-    btn.textContent = opt.confirmText || 'Confirmar';
-    btn.className = 'dialog-confirm' + (opt.isDanger === false ? ' primary' : '');
-    $('dialogCancel').textContent = opt.cancelText || 'Cancelar';
-    dialogCallback = opt.onConfirm || null;
-    dialogCancelCb = opt.onCancel || null;
-    $('dialogBackdrop').classList.add('open');
-  }
-  $('dialogConfirm').addEventListener('click', function(){
-    $('dialogBackdrop').classList.remove('open');
-    var cb = dialogCallback; dialogCallback = null; dialogCancelCb = null;
-    if (cb) cb();
-  });
-  $('dialogCancel').addEventListener('click', function(){
-    $('dialogBackdrop').classList.remove('open');
-    var cb = dialogCancelCb; dialogCallback = null; dialogCancelCb = null;
-    if (cb) cb();
-  });
-
   function getWarningsForCell(emp, date, code){
     var warnings = [];
     if (!code) return warnings;
-
     if (code === 'FE' && !isHoliday(date)){
       var b = getHolidayBalances(date, date, emp);
       if (b[emp] <= 0) warnings.push('Saldo de folgas de feriado até a data é ' + b[emp] + '. Você está usando folga sem saldo.');
       return warnings;
     }
     if (!isWorkShift(code)) return warnings;
-
+    
     var d = new Date(date + 'T00:00:00');
     var prev = new Date(d); prev.setDate(prev.getDate()-1);
     var next = new Date(d); next.setDate(next.getDate()+1);
     var prevCode = (state.schedule[keyOf(prev)]||{})[emp];
     var nextCode = (state.schedule[keyOf(next)]||{})[emp];
-
+    
     if (isWorkShift(prevCode) && !isValidTransition(prevCode, code)){
       warnings.push('Após ' + prevCode + ' no dia anterior, o próximo turno só pode começar a partir de ' + fmtMin(shiftNextMin(prevCode)) + '.');
     }
@@ -395,18 +546,13 @@
       var s = getShift(code);
       warnings.push(code + ' termina às ' + s.end + ', então o dia seguinte só pode ter turno a partir de ' + fmtMin(shiftNextMin(code)) + '.');
     }
-
     if (d.getDay() === 0){
       var maxW = state.sundayRule.maxWorkers || 2;
       var others = state.employees.filter(function(e){ return e !== emp && isWorkShift((state.schedule[date]||{})[e]); });
-      if (others.length >= maxW) {
-        warnings.push('Domingo já tem ' + maxW + ' colaboradores trabalhando. O limite é ' + maxW + '.');
-      }
+      if (others.length >= maxW) warnings.push('Domingo já tem ' + maxW + ' colaboradores trabalhando. O limite é ' + maxW + '.');
       var cons = getConsecutiveSundays(emp, date);
       var maxC = state.sundayRule.maxConsecutive || 2;
-      if (cons > maxC) {
-        warnings.push('Este colaborador vai trabalhar ' + cons + ' domingos consecutivos. O limite configurado é ' + maxC + '.');
-      }
+      if (cons > maxC) warnings.push('Este colaborador vai trabalhar ' + cons + ' domingos consecutivos. O limite configurado é ' + maxC + '.');
     }
     return warnings;
   }
@@ -424,10 +570,7 @@
       if (code === '06:00') has06 = true;
       if (code === '14:00') has14 = true;
     });
-    return {
-      missing06: !!state.shifts['06:00'] && !has06,
-      missing14: !!state.shifts['14:00'] && !has14
-    };
+    return { missing06: !!state.shifts['06:00'] && !has06, missing14: !!state.shifts['14:00'] && !has14 };
   }
 
   function renderHeader(){
@@ -438,18 +581,14 @@
     } else {
       periodTitle.textContent = MONTHS[currentDate.getMonth()] + ' ' + currentDate.getFullYear();
     }
-    $('teamNameDisplay').textContent = state.teamName;
-    document.title = state.teamName + ' · Escala';
   }
 
   function emptyStateHTML(msg){
-    return '<div class="empty-state">' +
-      '<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>' +
-      '<div>' + msg + '</div></div>';
+    return '<div class="empty-state"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg><div>'+msg+'</div></div>';
   }
 
   function renderWeek(){
-    if (state.employees.length === 0){
+    if (!state.employees || state.employees.length === 0){
       viewWeek.innerHTML = emptyStateHTML('Nenhum colaborador cadastrado. Adicione em <strong>Ajustes</strong>.');
       return;
     }
@@ -506,32 +645,22 @@
       var info = getWeekFolgas(emp, weekStart);
       if (info.planned) anyPlanned = true;
       if (req > 0 && info.planned){
-        if (info.folgas + info.empty < req) {
-          folgaIssues.push({ emp: emp, folgas: info.folgas, req: req, scale: scale });
-        } else if (info.folgas >= req) {
-          folgaOkList.push(emp + ': ' + info.folgas + '/' + req);
-        }
+        if (info.folgas + info.empty < req) folgaIssues.push({ emp: emp, folgas: info.folgas, req: req, scale: scale });
+        else if (info.folgas >= req) folgaOkList.push(emp + ': ' + info.folgas + '/' + req);
       }
     });
     if (folgaIssues.length){
-      h += '<div class="week-alerts"><div class="warn-card">' +
-        '<h3>⚠ Folgas da Semana (Seg–Dom)</h3><ul>' +
-        folgaIssues.map(function(w){
-          return '<li><strong>' + w.emp + '</strong>: ' + w.folgas + ' folga(s) — precisa ' + w.req + ' (escala ' + w.scale + ')</li>';
-        }).join('') +
+      h += '<div class="week-alerts"><div class="warn-card"><h3>⚠ Folgas da Semana (Seg–Dom)</h3><ul>' +
+        folgaIssues.map(function(w){ return '<li><strong>' + w.emp + '</strong>: ' + w.folgas + ' folga(s) — precisa ' + w.req + ' (escala ' + w.scale + ')</li>'; }).join('') +
         '</ul></div></div>';
     } else if (anyPlanned && folgaOkList.length){
-      h += '<div class="week-alerts"><div class="warn-card ok">' +
-        '<h3>✓ Folgas em dia (Seg–Dom)</h3>' +
-        '<div style="font-size:12.5px;color:#166534;line-height:1.7">' + folgaOkList.join(' · ') + '</div>' +
-        '</div></div>';
+      h += '<div class="week-alerts"><div class="warn-card ok"><h3>✓ Folgas em dia (Seg–Dom)</h3><div style="font-size:12.5px;color:#166534;line-height:1.7">' + folgaOkList.join(' · ') + '</div></div></div>';
     }
-
     viewWeek.innerHTML = h;
   }
 
   function renderMonth(){
-    if (state.employees.length === 0){
+    if (!state.employees || state.employees.length === 0){
       viewMonth.innerHTML = emptyStateHTML('Nenhum colaborador cadastrado. Adicione em <strong>Ajustes</strong>.');
       return;
     }
@@ -571,22 +700,17 @@
       }
       h += '</tr>';
     }
-    h += '</tbody></table></div>';
-    h += '<div class="legend">';
+    h += '</tbody></table></div><div class="legend">';
     Object.keys(state.shifts).forEach(function(id){
       var s = state.shifts[id];
-      if (s.type === 'event'){
-        h += '<div class="legend-item"><span class="legend-dot" style="background:' + s.color + ';color:' + s.text + '">' + s.label + '</span>' + s.name + '</div>';
-      }
+      if (s.type === 'event') h += '<div class="legend-item"><span class="legend-dot" style="background:' + s.color + ';color:' + s.text + '">' + s.label + '</span>' + s.name + '</div>';
     });
     h += '</div>';
 
     var monthWarnings = getWeekWarningsForMonth(y, m);
     if (monthWarnings.length){
-      h += '<div class="week-alerts"><div class="warn-card">' +
-        '<h3>⚠ Folgas Semanais (Seg–Dom)</h3><ul>' +
-        monthWarnings.map(function(w){ return '<li>' + w + '</li>'; }).join('') +
-        '</ul></div></div>';
+      h += '<div class="week-alerts"><div class="warn-card"><h3>⚠ Folgas Semanais (Seg–Dom)</h3><ul>' +
+        monthWarnings.map(function(w){ return '<li>' + w + '</li>'; }).join('') + '</ul></div></div>';
     } else {
       var hasAnyPlanned = false;
       for (var dd=1; dd<=n; dd++){
@@ -594,10 +718,7 @@
         if (state.schedule[kk] && Object.keys(state.schedule[kk]).length){ hasAnyPlanned = true; break; }
       }
       if (hasAnyPlanned){
-        h += '<div class="week-alerts"><div class="warn-card ok">' +
-          '<h3>✓ Folgas Semanais em dia (Seg–Dom)</h3>' +
-          '<div style="font-size:12.5px;color:#166534;line-height:1.7">Todas as semanas do mês respeitam a escala configurada (6x1 / 5x2).</div>' +
-          '</div></div>';
+        h += '<div class="week-alerts"><div class="warn-card ok"><h3>✓ Folgas Semanais em dia (Seg–Dom)</h3><div style="font-size:12.5px;color:#166534;line-height:1.7">Todas as semanas do mês respeitam a escala configurada.</div></div></div>';
       }
     }
 
@@ -610,7 +731,7 @@
   }
 
   function renderSummary(){
-    if (state.employees.length === 0){
+    if (!state.employees || state.employees.length === 0){
       viewSummary.innerHTML = emptyStateHTML('Nenhum colaborador cadastrado.');
       return;
     }
@@ -624,17 +745,12 @@
       if (b < 0){ bg = '#fee2e2'; c = '#991b1b'; }
       return '<span class="bd-chip" style="background:' + bg + ';color:' + c + ';border:1px solid rgba(0,0,0,.05)">' + emp + ': ' + b + '</span>';
     }).join('');
-    var h = '<div class="summary">' +
-      '<div class="summary-card" style="background:linear-gradient(135deg,#eff6ff,#f8fafc);border-color:#bfdbfe">' +
-        '<div class="section-head" style="margin-bottom:10px">' +
-          '<div class="section-icon" style="background:#dbeafe;color:#1e40af">' +
-            '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>' +
-          '</div>' +
-          '<h3 class="section-title" style="color:#1e3a8a">Saldo de Folgas de Feriado</h3>' +
-        '</div>' +
+    var h = '<div class="summary"><div class="summary-card" style="background:linear-gradient(135deg,#eff6ff,#f8fafc);border-color:#bfdbfe">' +
+        '<div class="section-head" style="margin-bottom:10px"><div class="section-icon" style="background:#dbeafe;color:#1e40af"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg></div>' +
+          '<h3 class="section-title" style="color:#1e3a8a">Saldo de Folgas de Feriado</h3></div>' +
         '<p style="font-size:12.5px;color:#64748b;margin:-4px 0 14px">+1 ao trabalhar em feriado · −1 ao usar FE em dia útil</p>' +
-        '<div class="bd">' + balChips + '</div>' +
-      '</div>';
+        '<div class="bd">' + balChips + '</div></div>';
+    
     for (var i=0; i<state.employees.length; i++){
       var emp = state.employees[i];
       var work=0, folga=0, ferias=0, counts = {};
@@ -650,26 +766,22 @@
         var bg = (s.color === '#f1f5f9' || s.color === '#f8fafc') ? '#e2e8f0' : s.color;
         return '<span class="bd-chip" style="background:' + bg + ';color:' + s.text + '">' + s.label + ' · ' + counts[c] + '</span>';
       }).join('');
-      h += '<div class="summary-card">' +
-        '<h3>' + emp + '</h3>' +
+      h += '<div class="summary-card"><h3>' + emp + '</h3>' +
         '<div class="stats">' +
           '<div class="stat"><span class="stat-num">' + work + '</span><span class="stat-lab">Trabalho</span></div>' +
           '<div class="stat"><span class="stat-num">' + folga + '</span><span class="stat-lab">Folgas</span></div>' +
           '<div class="stat"><span class="stat-num">' + ferias + '</span><span class="stat-lab">Férias/Outros</span></div>' +
-        '</div>' +
-        (chipsHtml ? '<div class="bd">' + chipsHtml + '</div>' : '') +
-      '</div>';
+        '</div>' + (chipsHtml ? '<div class="bd">' + chipsHtml + '</div>' : '') + '</div>';
     }
+    
     var warningList = [];
     for (var d=1; d<=n; d++){
       var key = dateKey(y,m,d);
       var dt = new Date(y,m,d);
-
       if (dt.getDay() === 0){
         var c = countSundayWorkers(key);
         var maxW = state.sundayRule.maxWorkers || 2;
         if (c > maxW) warningList.push('Domingo ' + pad(d) + '/' + pad(m+1) + ': ' + c + ' trabalhando (limite ' + maxW + ').');
-
         state.employees.forEach(function(emp){
           var code = (state.schedule[key]||{})[emp];
           if (isWorkShift(code)) {
@@ -678,14 +790,11 @@
             if (cons > maxC) {
               var prev = new Date(dt); prev.setDate(prev.getDate() - 7);
               var prevCode = (state.schedule[keyOf(prev)]||{})[emp];
-              if (!isWorkShift(prevCode)) {
-                warningList.push(emp + ': ' + cons + ' domingos consecutivos a partir de ' + pad(d) + '/' + pad(m+1) + ' (limite ' + maxC + ').');
-              }
+              if (!isWorkShift(prevCode)) warningList.push(emp + ': ' + cons + ' domingos consecutivos a partir de ' + pad(d) + '/' + pad(m+1) + ' (limite ' + maxC + ').');
             }
           }
         });
       }
-
       var miss = checkEssentialShifts(key);
       if (miss.missing06) warningList.push('Dia ' + pad(d) + '/' + pad(m+1) + ': Ninguém escalado no horário essencial das 06:00.');
       if (miss.missing14) warningList.push('Dia ' + pad(d) + '/' + pad(m+1) + ': Ninguém escalado no horário essencial das 14:00.');
@@ -699,7 +808,6 @@
         }
       }
     });
-
     getWeekWarningsForMonth(y, m).forEach(function(w){ warningList.push(w); });
 
     if (warningList.length){
@@ -714,184 +822,87 @@
 
   function renderSettings(){
     var h = '';
-    h += '<div class="settings-section full">' +
-      '<div class="section-head">' +
-        '<div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></div>' +
-        '<h3 class="section-title">Geral</h3>' +
-      '</div>' +
-      '<div class="settings-row"><label>Nome da equipe / setor</label>' +
-        '<input type="text" class="team-name-input" id="teamNameInput" value="' + state.teamName.replace(/"/g,'&quot;') + '" style="max-width:280px;flex:1">' +
-      '</div>' +
-            '<div class="settings-row"><label>Sincronização com a nuvem</label>' +
-        '<span id="storageStatus" style="font-size:12px;font-weight:700;padding:6px 12px;border-radius:20px;background:#f1f5f9;color:#475569">—</span>' +
-      '</div>' +
-      '<div class="settings-row"><label>Forçar envio à nuvem</label>' +
-        '<button class="danger-btn neutral" id="forceSyncBtn">Sincronizar agora</button>' +
-      '</div>' +
-    '</div>';
+    // === NOVA ÁREA DE CONTA ===
+    h += `<div class="settings-section full" style="background:linear-gradient(135deg,#f8fafc,#f1f5f9);border-color:#e2e8f0">
+      <div class="section-head">
+        <div class="section-icon" style="background:#e2e8f0;color:#475569"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+        <h3 class="section-title">Conta e Equipe</h3>
+      </div>
+      <div class="settings-row"><label>Líder logado</label><span style="font-weight:600;font-size:13px;">${currentUser.email}</span></div>
+      <div class="settings-row"><label>Time atual</label><span style="font-weight:600;font-size:13px;">${currentTeam.name}</span></div>
+      <div style="display:flex;gap:10px;margin-top:15px;">
+        <button class="danger-btn neutral" style="flex:1;" onclick="window.changeTeam()">Trocar de Time</button>
+        <button class="danger-btn" style="flex:1;" onclick="window.doLogout()">Sair da Conta</button>
+      </div>
+    </div>`;
 
-    h += '<div class="settings-section">' +
-      '<div class="section-head">' +
-        '<div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>' +
-        '<h3 class="section-title">Colaboradores</h3>' +
-      '</div>' +
-      '<div class="edit-list" id="employeeList">';
+    h += '<div class="settings-section full">' +
+      '<div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></div><h3 class="section-title">Geral</h3></div>' +
+      '<div class="settings-row"><label>Nome do time</label><input type="text" class="team-name-input" id="teamNameInput" value="' + state.teamName.replace(/"/g,'&quot;') + '" style="max-width:280px;flex:1"></div>' +
+      '<div class="settings-row"><label>Sincronização</label><span id="storageStatus" style="font-size:12px;font-weight:700;padding:6px 12px;border-radius:20px;background:#f1f5f9;color:#475569">—</span></div>' +
+      '<div class="settings-row"><label>Forçar envio à nuvem</label><button class="danger-btn neutral" id="forceSyncBtn">Sincronizar agora</button></div></div>';
+
+    h += '<div class="settings-section"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div><h3 class="section-title">Colaboradores</h3></div><div class="edit-list" id="employeeList">';
     state.employees.forEach(function(emp){
-      h += '<div class="edit-row" data-emp="' + emp.replace(/"/g,'&quot;') + '">' +
-        '<input type="text" class="name-input emp-name" value="' + emp.replace(/"/g,'&quot;') + '" placeholder="Nome">' +
-        '<button class="row-delete" data-del-emp="' + emp.replace(/"/g,'&quot;') + '" title="Remover">' +
-          '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>' +
-        '</button>' +
-      '</div>';
+      h += '<div class="edit-row" data-emp="' + emp.replace(/"/g,'&quot;') + '"><input type="text" class="name-input emp-name" value="' + emp.replace(/"/g,'&quot;') + '" placeholder="Nome"><button class="row-delete" data-del-emp="' + emp.replace(/"/g,'&quot;') + '" title="Remover"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div>';
     });
-    h += '</div>' +
-      '<button class="add-btn" id="addEmployeeBtn">' +
-        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5v14"/></svg> Adicionar colaborador' +
-      '</button>' +
-    '</div>';
+    h += '</div><button class="add-btn" id="addEmployeeBtn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5v14"/></svg> Adicionar colaborador</button></div>';
 
     var workIds = Object.keys(state.shifts).filter(function(k){ return state.shifts[k].type === 'work'; });
     workIds.sort(function(a,b){ return parseTime(state.shifts[a].start) - parseTime(state.shifts[b].start); });
 
-    h += '<div class="settings-section">' +
-      '<div class="section-head">' +
-        '<div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>' +
-        '<h3 class="section-title">Turnos de Trabalho</h3>' +
-      '</div>' +
-      '<div class="edit-list" id="workShiftList">';
+    h += '<div class="settings-section"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><h3 class="section-title">Turnos de Trabalho</h3></div><div class="edit-list" id="workShiftList">';
     workIds.forEach(function(id){
       var s = state.shifts[id];
-      h += '<div class="edit-row" data-shift="' + id + '" data-type="work">' +
-        '<input type="color" class="color-picker shift-color" value="' + s.color + '" title="Cor">' +
-        '<input type="text" class="label-input shift-label" value="' + s.label.replace(/"/g,'&quot;') + '" maxlength="4" title="Rótulo">' +
-        '<input type="time" class="time-input shift-start" value="' + s.start + '" title="Início">' +
-        '<span class="arrow">→</span>' +
-        '<input type="time" class="time-input shift-end" value="' + s.end + '" title="Fim">' +
-        '<button class="row-delete" data-del-shift="' + id + '" title="Remover">' +
-          '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>' +
-        '</button>' +
-      '</div>';
+      h += '<div class="edit-row" data-shift="' + id + '" data-type="work"><input type="color" class="color-picker shift-color" value="' + s.color + '" title="Cor"><input type="text" class="label-input shift-label" value="' + s.label.replace(/"/g,'&quot;') + '" maxlength="4" title="Rótulo"><input type="time" class="time-input shift-start" value="' + s.start + '" title="Início"><span class="arrow">→</span><input type="time" class="time-input shift-end" value="' + s.end + '" title="Fim"><button class="row-delete" data-del-shift="' + id + '" title="Remover"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div>';
     });
-    h += '</div>' +
-      '<button class="add-btn" id="addWorkShiftBtn">' +
-        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5v14"/></svg> Adicionar turno' +
-      '</button>' +
-    '</div>';
+    h += '</div><button class="add-btn" id="addWorkShiftBtn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5v14"/></svg> Adicionar turno</button></div>';
 
     var eventIds = Object.keys(state.shifts).filter(function(k){ return state.shifts[k].type === 'event'; });
-    h += '<div class="settings-section">' +
-      '<div class="section-head">' +
-        '<div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82Z"/><line x1="7" x2="7.01" y1="7" y2="7"/></svg></div>' +
-        '<h3 class="section-title">Eventos e Folgas</h3>' +
-      '</div>' +
-      '<div class="edit-list" id="eventShiftList">';
+    h += '<div class="settings-section"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82Z"/><line x1="7" x2="7.01" y1="7" y2="7"/></svg></div><h3 class="section-title">Eventos e Folgas</h3></div><div class="edit-list" id="eventShiftList">';
     eventIds.forEach(function(id){
       var s = state.shifts[id];
-      h += '<div class="edit-row" data-shift="' + id + '" data-type="event">' +
-        '<input type="color" class="color-picker shift-color" value="' + s.color + '" title="Cor">' +
-        '<input type="text" class="label-input shift-label" value="' + s.label.replace(/"/g,'&quot;') + '" maxlength="4" title="Rótulo">' +
-        '<input type="text" class="name-input shift-name-input" value="' + s.name.replace(/"/g,'&quot;') + '" placeholder="Nome do evento" title="Nome">' +
-        '<button class="row-delete" data-del-shift="' + id + '" title="Remover">' +
-          '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>' +
-        '</button>' +
-      '</div>';
+      h += '<div class="edit-row" data-shift="' + id + '" data-type="event"><input type="color" class="color-picker shift-color" value="' + s.color + '" title="Cor"><input type="text" class="label-input shift-label" value="' + s.label.replace(/"/g,'&quot;') + '" maxlength="4" title="Rótulo"><input type="text" class="name-input shift-name-input" value="' + s.name.replace(/"/g,'&quot;') + '" placeholder="Nome do evento" title="Nome"><button class="row-delete" data-del-shift="' + id + '" title="Remover"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div>';
     });
-    h += '</div>' +
-      '<button class="add-btn" id="addEventBtn">' +
-        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5v14"/></svg> Adicionar evento' +
-      '</button>' +
-    '</div>';
+    h += '</div><button class="add-btn" id="addEventBtn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5v14"/></svg> Adicionar evento</button></div>';
 
-    h += '<div class="settings-section full" style="background:linear-gradient(135deg,#eff6ff,#f8fafc);border-color:#bfdbfe">' +
-      '<div class="section-head">' +
-        '<div class="section-icon" style="background:#dbeafe;color:#1e40af"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div>' +
-        '<h3 class="section-title" style="color:#1e3a8a">Automação</h3>' +
-      '</div>' +
-      '<p style="font-size:12.5px;color:#64748b;margin:-4px 0 12px">Preenche o mês com os horários padrão (Seg a Sáb). Domingos e folgas ficam em branco para lançamento manual.</p>' +
-      '<div class="sub-section-title">Turno padrão por colaborador</div>';
+    h += '<div class="settings-section full" style="background:linear-gradient(135deg,#eff6ff,#f8fafc);border-color:#bfdbfe"><div class="section-head"><div class="section-icon" style="background:#dbeafe;color:#1e40af"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div><h3 class="section-title" style="color:#1e3a8a">Automação</h3></div><p style="font-size:12.5px;color:#64748b;margin:-4px 0 12px">Preenche o mês com os horários padrão (Seg a Sáb). Domingos e folgas ficam em branco.</p><div class="sub-section-title">Turno padrão por colaborador</div>';
     state.employees.forEach(function(emp){
       var cur = state.defaultShift[emp] || '';
-      var opts = workIds.map(function(id){
-        return '<option value="' + id + '" ' + (id===cur?'selected':'') + '>' + state.shifts[id].name + '</option>';
-      }).join('');
+      var opts = workIds.map(function(id){ return '<option value="' + id + '" ' + (id===cur?'selected':'') + '>' + state.shifts[id].name + '</option>'; }).join('');
       h += '<div class="settings-row"><label>' + emp + '</label><select class="def-shift" data-emp="' + emp.replace(/"/g,'&quot;') + '">' + opts + '</select></div>';
     });
-    h += '<button class="btn-auto" id="btnAuto" style="margin-top:14px">' +
-      '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Gerar Escala do Mês' +
-    '</button>' +
-    '</div>';
+    h += '<button class="btn-auto" id="btnAuto" style="margin-top:14px"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Gerar Escala do Mês</button></div>';
 
     var rule = state.sundayRule;
-    h += '<div class="settings-section full">' +
-      '<div class="section-head">' +
-        '<div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg></div>' +
-        '<h3 class="section-title">Regras de Escala</h3>' +
-      '</div>' +
-      '<div class="settings-row"><label>Máximo de colaboradores no domingo</label>' +
-        '<select class="sun-rule-config" data-key="maxWorkers">' +
-          [1,2,3,4,5].map(function(v){ return '<option value="' + v + '" ' + (rule.maxWorkers==v?'selected':'') + '>' + v + '</option>'; }).join('') +
-        '</select>' +
-      '</div>' +
-      '<div class="settings-row"><label>Máximo de domingos consecutivos (sem folga)</label>' +
-        '<select class="sun-rule-config" data-key="maxConsecutive">' +
-          '<option value="1" ' + (rule.maxConsecutive==1?'selected':'') + '>1 Domingo</option>' +
-          '<option value="2" ' + (rule.maxConsecutive==2?'selected':'') + '>2 Domingos</option>' +
-          '<option value="3" ' + (rule.maxConsecutive==3?'selected':'') + '>3 Domingos</option>' +
-          '<option value="4" ' + (rule.maxConsecutive==4?'selected':'') + '>4 Domingos</option>' +
-        '</select>' +
-      '</div>' +
-      '<div class="settings-row"><label>Cor do cabeçalho de Domingo</label>' +
-        '<input type="color" class="color-picker sunday-color" value="' + (state.colors.SUNDAY ? state.colors.SUNDAY.color : '#ef4444') + '">' +
-      '</div>' +
-      '<div class="sub-section-title">Escala semanal por colaborador (folgas)</div>';
+    h += '<div class="settings-section full"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg></div><h3 class="section-title">Regras de Escala</h3></div>' +
+      '<div class="settings-row"><label>Máximo de colaboradores no domingo</label><select class="sun-rule-config" data-key="maxWorkers">' + [1,2,3,4,5].map(function(v){ return '<option value="' + v + '" ' + (rule.maxWorkers==v?'selected':'') + '>' + v + '</option>'; }).join('') + '</select></div>' +
+      '<div class="settings-row"><label>Máximo de domingos consecutivos</label><select class="sun-rule-config" data-key="maxConsecutive">' + [1,2,3,4].map(function(v){ return '<option value="' + v + '" ' + (rule.maxConsecutive==v?'selected':'') + '>' + v + ' Domingo(s)</option>'; }).join('') + '</select></div>' +
+      '<div class="settings-row"><label>Cor do cabeçalho de Domingo</label><input type="color" class="color-picker sunday-color" value="' + (state.colors.SUNDAY ? state.colors.SUNDAY.color : '#ef4444') + '"></div>' +
+      '<div class="sub-section-title">Escala semanal por colaborador</div>';
     state.employees.forEach(function(emp){
       var cur = getEmployeeScale(emp);
-      h += '<div class="settings-row"><label>' + emp + '</label>' +
-        '<select class="emp-scale" data-emp="' + emp.replace(/"/g,'&quot;') + '">' +
-          '<option value="6x1" ' + (cur==='6x1'?'selected':'') + '>6x1 — 1 folga/semana</option>' +
-          '<option value="5x2" ' + (cur==='5x2'?'selected':'') + '>5x2 — 2 folgas/semana</option>' +
-          '<option value="off" ' + (cur==='off'?'selected':'') + '>Não verificar</option>' +
-        '</select>' +
-      '</div>';
+      h += '<div class="settings-row"><label>' + emp + '</label><select class="emp-scale" data-emp="' + emp.replace(/"/g,'&quot;') + '"><option value="6x1" ' + (cur==='6x1'?'selected':'') + '>6x1 — 1 folga/semana</option><option value="5x2" ' + (cur==='5x2'?'selected':'') + '>5x2 — 2 folgas/semana</option><option value="off" ' + (cur==='off'?'selected':'') + '>Não verificar</option></select></div>';
     });
     h += '</div>';
 
-    h += '<div class="settings-section">' +
-      '<div class="section-head">' +
-        '<div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></div>' +
-        '<h3 class="section-title">Feriados</h3>' +
-      '</div>';
+    h += '<div class="settings-section"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></div><h3 class="section-title">Feriados</h3></div>';
     var sorted = Object.keys(state.holidays).sort();
-    if (sorted.length === 0){
-      h += '<p style="font-size:12.5px;color:var(--muted);padding:8px 0">Nenhum feriado cadastrado.</p>';
-    }
+    if (sorted.length === 0) h += '<p style="font-size:12.5px;color:var(--muted);padding:8px 0">Nenhum feriado cadastrado.</p>';
     h += '<div class="holiday-list">';
     sorted.forEach(function(k){
       var p = k.split('-');
-      h += '<div class="holiday-item"><span>' + p[2] + '/' + p[1] + '/' + p[0] + ' — ' + state.holidays[k] + '</span>' +
-        '<button data-del-hol="' + k + '">remover</button></div>';
+      h += '<div class="holiday-item"><span>' + p[2] + '/' + p[1] + '/' + p[0] + ' — ' + state.holidays[k] + '</span><button data-del-hol="' + k + '">remover</button></div>';
     });
-    h += '</div>' +
-      '<div class="add-holiday">' +
-        '<input type="date" id="newHolDate">' +
-        '<input type="text" id="newHolName" placeholder="Nome do feriado">' +
-        '<button id="addHolBtn">Adicionar</button>' +
-      '</div>' +
-    '</div>';
+    h += '</div><div class="add-holiday"><input type="date" id="newHolDate"><input type="text" id="newHolName" placeholder="Nome do feriado"><button id="addHolBtn">Adicionar</button></div></div>';
 
-    h += '<div class="settings-section full">' +
-      '<div class="section-head">' +
-        '<div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5M3 12a9 3 0 0 0 18 0"/></svg></div>' +
-        '<h3 class="section-title">Dados / Backup</h3>' +
-      '</div>' +
+    h += '<div class="settings-section full"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5M3 12a9 3 0 0 0 18 0"/></svg></div><h3 class="section-title">Dados / Backup</h3></div>' +
       '<div class="settings-row"><label>Exportar backup completo</label><button class="danger-btn neutral" id="downloadCsvBtn">Baixar CSV</button></div>' +
       '<div class="settings-row"><label>Importar backup</label><button class="danger-btn success" id="importBtn">Importar</button></div>' +
       '<div class="settings-row"><label>Limpar escala do mês atual</label><button class="danger-btn" id="clearMonthBtn">Limpar</button></div>' +
-      '<div class="settings-row"><label>Apagar todos os dados</label><button class="danger-btn" id="resetBtn">Apagar</button></div>' +
-    '</div>';
-    h += '<input type="file" id="importFile" accept=".csv,.tsv,.txt" style="display:none">';
+      '<div class="settings-row"><label>Apagar todos os dados</label><button class="danger-btn" id="resetBtn">Apagar</button></div></div>';
+    
     viewSettings.innerHTML = h;
-
     updateStorageStatus();
   }
 
@@ -912,7 +923,6 @@
     renderActive();
   }
 
-  /* ===== SHEET ===== */
   var sheetCtx = null;
   function buildShiftBtn(code, cur, emp, dateStr){
     var s = getShift(code); if (!s) return '';
@@ -927,11 +937,7 @@
       var b = getHolidayBalances(dateStr, dateStr, emp);
       nameDisplay = 'Saldo: ' + b[emp];
     }
-    return '<button class="shift-btn ' + active + ' ' + (invalid?'invalid':'') + '" data-code="' + code + '" style="--c:' + s.color + ';--t:' + s.text + '" title="' + (invalid?reason.replace(/"/g,'&quot;'):'') + '">' +
-      '<span class="shift-code">' + s.label + '</span>' +
-      '<span class="shift-name">' + nameDisplay + '</span>' +
-      (invalid?'<span class="shift-reason">' + (reason.length>40?reason.slice(0,40)+'…':reason) + '</span>':'') +
-    '</button>';
+    return '<button class="shift-btn ' + active + ' ' + (invalid?'invalid':'') + '" data-code="' + code + '" style="--c:' + s.color + ';--t:' + s.text + '" title="' + (invalid?reason.replace(/"/g,'&quot;'):'') + '"><span class="shift-code">' + s.label + '</span><span class="shift-name">' + nameDisplay + '</span>' + (invalid?'<span class="shift-reason">' + (reason.length>40?reason.slice(0,40)+'…':reason) + '</span>':'') + '</button>';
   }
 
   function openSheet(emp, dateStr){
@@ -940,31 +946,23 @@
     sheetTitle.textContent = emp;
     sheetSub.textContent = fmtLong(d);
     var cur = (state.schedule[dateStr]||{})[emp] || '';
-
     var workIds = Object.keys(state.shifts).filter(function(k){ return state.shifts[k].type === 'work'; });
     workIds.sort(function(a,b){ return parseTime(state.shifts[a].start) - parseTime(state.shifts[b].start); });
     var eventIds = Object.keys(state.shifts).filter(function(k){ return state.shifts[k].type === 'event'; });
-
+    
     if (workIds.length){
-      workShiftGrid.style.display = 'grid';
-      workSectionTitle.style.display = 'block';
+      workShiftGrid.style.display = 'grid'; workSectionTitle.style.display = 'block';
       workShiftGrid.innerHTML = workIds.map(function(id){ return buildShiftBtn(id, cur, emp, dateStr); }).join('');
-    } else {
-      workShiftGrid.style.display = 'none';
-      workSectionTitle.style.display = 'none';
-    }
-
+    } else { workShiftGrid.style.display = 'none'; workSectionTitle.style.display = 'none'; }
+    
     if (eventIds.length){
-      eventShiftGrid.style.display = 'grid';
-      eventSectionTitle.style.display = 'block';
+      eventShiftGrid.style.display = 'grid'; eventSectionTitle.style.display = 'block';
       eventShiftGrid.innerHTML = eventIds.map(function(id){ return buildShiftBtn(id, cur, emp, dateStr); }).join('');
-    } else {
-      eventShiftGrid.style.display = 'none';
-      eventSectionTitle.style.display = 'none';
-    }
-    sheet.classList.add('open');
-    sheetBackdrop.classList.add('open');
+    } else { eventShiftGrid.style.display = 'none'; eventSectionTitle.style.display = 'none'; }
+    
+    sheet.classList.add('open'); sheetBackdrop.classList.add('open');
   }
+  
   function closeSheet(){ sheet.classList.remove('open'); sheetBackdrop.classList.remove('open'); sheetCtx = null; }
 
   function commitShift(emp, date, code){
@@ -972,9 +970,7 @@
     if (code) state.schedule[date][emp] = code;
     else delete state.schedule[date][emp];
     if (Object.keys(state.schedule[date]).length === 0) delete state.schedule[date];
-    save();
-    closeSheet();
-    renderActive();
+    save(); closeSheet(); renderActive();
     toast(code ? 'Turno aplicado' : 'Célula limpa');
   }
 
@@ -988,8 +984,7 @@
         showDialog({
           title: '⚠ Conflito com as regras',
           body: '<strong>' + emp + ' · ' + fmtLong(new Date(date+'T00:00:00')) + '</strong><br><br>' + list,
-          confirmText: 'Aplicar mesmo assim',
-          isDanger: true,
+          confirmText: 'Aplicar mesmo assim', isDanger: true,
           onConfirm: function(){ commitShift(emp, date, code); }
         });
         return;
@@ -1003,32 +998,21 @@
     var n = daysInMonth(currentDate);
     showDialog({
       title: '⚡ Gerar Escala Automática',
-      body: '<p style="margin-top:0">Preencher a escala de <strong>' + MONTHS[m] + ' ' + y + '</strong>?</p>' +
-        '<ul style="padding-left:18px;font-size:12.5px;color:#475569;margin:8px 0 14px">' +
-        '<li>Horários padrão (Seg a Sáb) serão preenchidos.</li>' +
-        '<li>Domingos e folgas ficam em branco.</li>' +
-        '</ul>' +
-        '<div style="background:#fef2f2;padding:10px 12px;border-radius:8px;border:1px solid #fecaca;color:#991b1b;font-size:12px;font-weight:600">' +
-        '⚠ Células existentes serão substituídas.' +
-        '</div>',
-      confirmText: 'Confirmar',
-      isDanger: false,
+      body: '<p style="margin-top:0">Preencher a escala de <strong>' + MONTHS[m] + ' ' + y + '</strong>?</p><ul style="padding-left:18px;font-size:12.5px;color:#475569;margin:8px 0 14px"><li>Horários padrão (Seg a Sáb) serão preenchidos.</li><li>Domingos e folgas ficam em branco.</li></ul><div style="background:#fef2f2;padding:10px 12px;border-radius:8px;border:1px solid #fecaca;color:#991b1b;font-size:12px;font-weight:600">⚠ Células existentes serão substituídas.</div>',
+      confirmText: 'Confirmar', isDanger: false,
       onConfirm: function(){
         for (var d=1; d<=n; d++) delete state.schedule[dateKey(y,m,d)];
         for (var d=1; d<=n; d++){
           var dow = new Date(y,m,d).getDay();
           if (dow === 0) continue;
-          var key = dateKey(y,m,d);
-          state.schedule[key] = {};
+          var key = dateKey(y,m,d); state.schedule[key] = {};
           state.employees.forEach(function(emp){
             var def = state.defaultShift[emp];
             if (def && isWorkShift(def)) state.schedule[key][emp] = def;
           });
           if (Object.keys(state.schedule[key]).length === 0) delete state.schedule[key];
         }
-        save();
-        renderActive();
-        toast('Escala gerada. Preencha domingos e folgas.');
+        save(); renderActive(); toast('Escala gerada.');
       }
     });
   }
@@ -1036,8 +1020,7 @@
   function buildCSV(){
     var y = currentDate.getFullYear(), m = currentDate.getMonth();
     var n = daysInMonth(currentDate);
-    var lines = [];
-    var head = ['Colaborador'];
+    var lines = [], head = ['Colaborador'];
     for (var d=1; d<=n; d++) head.push(d);
     lines.push(head.join(','));
     state.employees.forEach(function(emp){
@@ -1045,13 +1028,8 @@
       for (var d=1; d<=n; d++) r.push((state.schedule[dateKey(y,m,d)]||{})[emp] || '');
       lines.push(r.join(','));
     });
-    lines.push('');
-    lines.push('#CONFIG_BEGIN');
-    lines.push(JSON.stringify({
-      teamName: state.teamName, employees: state.employees, shifts: state.shifts,
-      defaultShift: state.defaultShift, employeeScale: state.employeeScale,
-      holidays: state.holidays, colors: state.colors, sundayRule: state.sundayRule
-    }));
+    lines.push('', '#CONFIG_BEGIN');
+    lines.push(JSON.stringify({ teamName: state.teamName, employees: state.employees, shifts: state.shifts, defaultShift: state.defaultShift, employeeScale: state.employeeScale, holidays: state.holidays, colors: state.colors, sundayRule: state.sundayRule }));
     lines.push('#CONFIG_END');
     return lines.join('\n');
   }
@@ -1061,10 +1039,8 @@
     var blob = new Blob(['\ufeff'+text], {type:'text/csv;charset=utf-8'});
     var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
-    a.href = url;
-    a.download = 'escala-' + state.teamName.replace(/\s+/g,'-').toLowerCase() + '-' + currentDate.getFullYear() + '-' + pad(currentDate.getMonth()+1) + '.csv';
-    a.click();
-    setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+    a.href = url; a.download = 'escala-' + state.teamName.replace(/\s+/g,'-').toLowerCase() + '-' + currentDate.getFullYear() + '-' + pad(currentDate.getMonth()+1) + '.csv';
+    a.click(); setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
   }
 
   function importBackup(file){
@@ -1108,9 +1084,7 @@
         }
       }
       if (!imported) return toast('Nenhum colaborador reconhecido.');
-      save();
-      renderActive();
-      toast('Backup restaurado!');
+      save(); renderActive(); toast('Backup restaurado!');
     };
     reader.readAsText(file);
   }
@@ -1123,9 +1097,7 @@
     if (first) state.defaultShift[name] = first;
     if (!state.employeeScale) state.employeeScale = {};
     state.employeeScale[name] = '6x1';
-    save();
-    renderActive();
-    toast('Colaborador adicionado');
+    save(); renderActive(); toast('Colaborador adicionado');
   }
 
   function renameEmployee(oldName, newName){
@@ -1140,12 +1112,8 @@
       if (d[oldName] !== undefined){ d[newName] = d[oldName]; delete d[oldName]; }
     });
     if (state.defaultShift[oldName] !== undefined){ state.defaultShift[newName] = state.defaultShift[oldName]; delete state.defaultShift[oldName]; }
-    if (state.employeeScale && state.employeeScale[oldName] !== undefined){
-      state.employeeScale[newName] = state.employeeScale[oldName];
-      delete state.employeeScale[oldName];
-    }
-    save();
-    return true;
+    if (state.employeeScale && state.employeeScale[oldName] !== undefined){ state.employeeScale[newName] = state.employeeScale[oldName]; delete state.employeeScale[oldName]; }
+    save(); return true;
   }
 
   function deleteEmployee(name){
@@ -1160,18 +1128,10 @@
       });
       delete state.defaultShift[name];
       if (state.employeeScale) delete state.employeeScale[name];
-      save();
-      renderActive();
-      toast('Colaborador removido');
+      save(); renderActive(); toast('Colaborador removido');
     };
     if (hasSchedule){
-      showDialog({
-        title: 'Remover Colaborador',
-        body: name + ' tem escalas registradas. Ao remover, todas as escalas dele serão apagadas. Continuar?',
-        confirmText: 'Remover',
-        isDanger: true,
-        onConfirm: doDelete
-      });
+      showDialog({ title: 'Remover Colaborador', body: name + ' tem escalas registradas. Ao remover, todas as escalas dele serão apagadas. Continuar?', confirmText: 'Remover', isDanger: true, onConfirm: doDelete });
     } else doDelete();
   }
 
@@ -1179,30 +1139,19 @@
     var candidates = ['08:00','11:00','12:00','13:00','15:00','17:00','19:00','20:00','21:00','05:00','23:00'];
     var start = candidates.find(function(t){ return !state.shifts[t]; });
     if (!start){
-      for (var h=0; h<24; h++){
-        var t = pad(h) + ':00';
-        if (!state.shifts[t]){ start = t; break; }
-      }
+      for (var h=0; h<24; h++){ var t = pad(h) + ':00'; if (!state.shifts[t]){ start = t; break; } }
     }
     if (!start) return toast('Sem horários disponíveis');
-    var startMin = parseTime(start);
-    var endMin = (startMin + 500) % 1440;
-    state.shifts[start] = {
-      type:'work', label:start.split(':')[0], name:start + ' – ' + fmtMin(endMin),
-      start:start, end:fmtMin(endMin), color:'#f1f5f9', text:'#0f172a'
-    };
-    save();
-    renderActive();
-    toast('Turno adicionado');
+    var startMin = parseTime(start), endMin = (startMin + 500) % 1440;
+    state.shifts[start] = { type:'work', label:start.split(':')[0], name:start + ' – ' + fmtMin(endMin), start:start, end:fmtMin(endMin), color:'#f1f5f9', text:'#0f172a' };
+    save(); renderActive(); toast('Turno adicionado');
   }
 
   function addEvent(){
     var base = 'E', code = base, i = 1;
     while (state.shifts[code]) code = base + (++i);
     state.shifts[code] = { type:'event', label:code, name:'Novo evento', color:'#e2e8f0', text:'#0f172a' };
-    save();
-    renderActive();
-    toast('Evento adicionado');
+    save(); renderActive(); toast('Evento adicionado');
   }
 
   function deleteShift(id){
@@ -1220,49 +1169,30 @@
           else delete state.defaultShift[emp];
         }
       });
-      save();
-      renderActive();
-      toast('Turno removido');
+      save(); renderActive(); toast('Turno removido');
     };
     if (isShiftInUse(id)){
-      showDialog({
-        title: 'Remover Turno',
-        body: 'Este turno está em uso. As células que o usam ficarão vazias. Continuar?',
-        confirmText: 'Remover',
-        isDanger: true,
-        onConfirm: doDelete
-      });
+      showDialog({ title: 'Remover Turno', body: 'Este turno está em uso. As células que o usam ficarão vazias. Continuar?', confirmText: 'Remover', isDanger: true, onConfirm: doDelete });
     } else doDelete();
   }
 
   function updateShiftField(id, field, value){
-    var s = state.shifts[id];
-    if (!s) return;
+    var s = state.shifts[id]; if (!s) return;
     if (field === 'start' && s.type === 'work'){
       var newId = value;
       if (state.shifts[newId] && newId !== id){ toast('Já existe um turno com este horário'); renderActive(); return; }
       var doRename = function(){
-        s.start = newId;
-        s.name = newId + ' – ' + s.end;
-        delete state.shifts[id];
-        state.shifts[newId] = s;
+        s.start = newId; s.name = newId + ' – ' + s.end;
+        delete state.shifts[id]; state.shifts[newId] = s;
         Object.keys(state.schedule).forEach(function(date){
           var d = state.schedule[date];
           Object.keys(d).forEach(function(emp){ if (d[emp] === id) d[emp] = newId; });
         });
         Object.keys(state.defaultShift).forEach(function(emp){ if (state.defaultShift[emp] === id) state.defaultShift[emp] = newId; });
-        save();
-        renderActive();
-        toast('Turno atualizado');
+        save(); renderActive(); toast('Turno atualizado');
       };
       if (isShiftInUse(id)){
-        showDialog({
-          title: 'Alterar Início do Turno',
-          body: 'Este turno está em uso. As referências serão atualizadas automaticamente. Continuar?',
-          confirmText: 'Continuar',
-          isDanger: false,
-          onConfirm: doRename
-        });
+        showDialog({ title: 'Alterar Início do Turno', body: 'Este turno está em uso. As referências serão atualizadas automaticamente. Continuar?', confirmText: 'Continuar', isDanger: false, onConfirm: doRename });
       } else doRename();
       return;
     }
@@ -1271,13 +1201,10 @@
     save();
   }
 
-  /* ===== IMPRESSÃO ===== */
   function setPrintOrientation(mode){
     var st = document.getElementById('printPageStyle');
     if (!st){ st = document.createElement('style'); st.id = 'printPageStyle'; document.head.appendChild(st); }
-    st.textContent = mode === 'week'
-      ? '@page { size: A4 portrait; margin: 10mm; }'
-      : '@page { size: A4 landscape; margin: 8mm; }';
+    st.textContent = mode === 'week' ? '@page { size: A4 portrait; margin: 10mm; }' : '@page { size: A4 landscape; margin: 8mm; }';
   }
 
   function doPrint(mode){
@@ -1296,25 +1223,13 @@
   }
 
   function requestPrint(){
-    if (activeView === 'week' || activeView === 'month'){
-      doPrint(activeView);
-      return;
-    }
-    showDialog({
-      title: 'Imprimir',
-      body: 'O que você deseja imprimir?',
-      confirmText: 'Mês atual',
-      cancelText: 'Semana atual',
-      isDanger: false,
-      onConfirm: function(){ doPrint('month'); },
-      onCancel: function(){ doPrint('week'); }
-    });
+    if (activeView === 'week' || activeView === 'month'){ doPrint(activeView); return; }
+    showDialog({ title: 'Imprimir', body: 'O que você deseja imprimir?', confirmText: 'Mês atual', cancelText: 'Semana atual', isDanger: false, onConfirm: function(){ doPrint('month'); }, onCancel: function(){ doPrint('week'); } });
   }
 
-  /* ===== EVENTOS ===== */
-  var currentDate = new Date();
-  var activeView = 'week';
-
+  // ==========================================
+  // 7. EVENT LISTENERS (Original)
+  // ==========================================
   $('prevBtn').addEventListener('click', function(){
     if (activeView === 'week') currentDate = new Date(currentDate.getTime() - 7*86400000);
     else currentDate = new Date(currentDate.getFullYear(), currentDate.getMonth()-1, 1);
@@ -1325,14 +1240,12 @@
     else currentDate = new Date(currentDate.getFullYear(), currentDate.getMonth()+1, 1);
     renderActive();
   });
-
   tabsEl.addEventListener('click', function(e){
     var btn = e.target.closest('.tab'); if (!btn) return;
     switchToView(btn.dataset.view);
   });
-
   $('printBtn').addEventListener('click', requestPrint);
-
+  
   viewWeek.addEventListener('click', function(e){
     var cell = e.target.closest('.wk-cell');
     if (cell) openSheet(cell.dataset.emp, cell.dataset.date);
@@ -1353,47 +1266,26 @@
   viewSettings.addEventListener('change', function(e){
     var t = e.target;
     if (t.id === 'teamNameInput'){ state.teamName = t.value.trim() || 'Equipe'; save(); renderHeader(); return; }
-    if (t.matches('.sun-rule-config')){
-      var key = t.dataset.key;
-      state.sundayRule[key] = parseInt(t.value, 10);
-      save();
-      return;
-    }
+    if (t.matches('.sun-rule-config')){ state.sundayRule[t.dataset.key] = parseInt(t.value, 10); save(); return; }
     if (t.matches('.def-shift')){ state.defaultShift[t.dataset.emp] = t.value; save(); return; }
-    if (t.matches('.emp-scale')){
-      if (!state.employeeScale) state.employeeScale = {};
-      state.employeeScale[t.dataset.emp] = t.value;
-      save();
-      return;
-    }
+    if (t.matches('.emp-scale')){ if (!state.employeeScale) state.employeeScale = {}; state.employeeScale[t.dataset.emp] = t.value; save(); return; }
     if (t.matches('.sunday-color')){ state.colors.SUNDAY = { color: t.value, text: getContrastColor(t.value) }; save(); renderActive(); return; }
-    if (t.id === 'importFile'){
-      var f = t.files[0];
-      if (f) importBackup(f);
-      t.value = '';
-      return;
-    }
+    if (t.id === 'importFile'){ var f = t.files[0]; if (f) importBackup(f); t.value = ''; return; }
   });
 
   viewSettings.addEventListener('blur', function(e){
-    var t = e.target;
-    if (!t.matches('input')) return;
-    var row = t.closest('.edit-row');
-    if (!row) return;
+    var t = e.target; if (!t.matches('input')) return;
+    var row = t.closest('.edit-row'); if (!row) return;
     if (t.matches('.emp-name')){
-      var oldName = row.dataset.emp;
-      var newName = t.value.trim();
+      var oldName = row.dataset.emp, newName = t.value.trim();
       if (newName && newName !== oldName){
-        if (renameEmployee(oldName, newName)){
-          row.dataset.emp = newName;
-          toast('Nome atualizado');
-        } else t.value = oldName;
+        if (renameEmployee(oldName, newName)){ row.dataset.emp = newName; toast('Nome atualizado'); }
+        else t.value = oldName;
       }
       return;
     }
     if (row.dataset.shift && t.matches('.shift-color, .shift-label, .shift-start, .shift-end, .shift-name-input')){
-      var id = row.dataset.shift;
-      if (!state.shifts[id]) return;
+      var id = row.dataset.shift; if (!state.shifts[id]) return;
       if (t.matches('.shift-color')) updateShiftField(id, 'color', t.value);
       else if (t.matches('.shift-label')) updateShiftField(id, 'label', t.value);
       else if (t.matches('.shift-start')) updateShiftField(id, 'start', t.value);
@@ -1411,13 +1303,9 @@
     if (t.id === 'addWorkShiftBtn'){ addWorkShift(); return; }
     if (t.id === 'addEventBtn'){ addEvent(); return; }
     if (t.id === 'btnAuto'){ autoFill(); return; }
-        if (t.id === 'forceSyncBtn'){
-      pendingSave = true;
-      _syncState = 'pending';
-      updateStorageStatus();
-      doSave().then(function(){
-        if (_syncState === 'synced') toast('✓ Sincronizado');
-      });
+    if (t.id === 'forceSyncBtn'){
+      pendingSave = true; _syncState = 'pending'; updateStorageStatus();
+      doSave().then(function(){ if (_syncState === 'synced') toast('✓ Sincronizado'); });
       return;
     }
     if (t.id === 'downloadCsvBtn'){ downloadCSV(); return; }
@@ -1429,103 +1317,36 @@
       return;
     }
     if (t.id === 'clearMonthBtn'){
-      showDialog({
-        title: 'Limpar Escala',
-        body: 'Apagar toda a escala deste mês?',
-        confirmText: 'Limpar Tudo',
-        isDanger: true,
-        onConfirm: function(){
+      showDialog({ title: 'Limpar Escala', body: 'Apagar toda a escala deste mês?', confirmText: 'Limpar Tudo', isDanger: true, onConfirm: function(){
           var y = currentDate.getFullYear(), m = currentDate.getMonth(), n = daysInMonth(currentDate);
           for (var d=1; d<=n; d++) delete state.schedule[dateKey(y,m,d)];
           save(); renderActive(); toast('Mês limpo');
-        }
-      });
+      }});
       return;
     }
     if (t.id === 'resetBtn'){
-      showDialog({
-        title: 'Apagar Tudo',
-        body: 'Apagar <strong>TODOS os dados</strong>? Escalas, colaboradores, turnos e configurações serão removidos. Ação irreversível.',
-        confirmText: 'Apagar Tudo',
-        isDanger: true,
-        onConfirm: function(){
-          localStorage.removeItem(STORAGE_KEY);
-          localStorage.removeItem(LEGACY_KEY);
-          state = getDefaultState();
-          renderActive();
-          toast('Dados apagados');
-        }
-      });
+      showDialog({ title: 'Apagar Tudo', body: 'Apagar <strong>TODOS os dados</strong>? Ação irreversível.', confirmText: 'Apagar Tudo', isDanger: true, onConfirm: function(){
+          state = getDefaultState(); save(); renderActive(); toast('Dados apagados');
+      }});
       return;
     }
   });
 
-    // ===== CARREGAMENTO INICIAL + REALTIME =====
-  async function loadState(){
-    try {
-      var res = await sb.from('escala').select('data').eq('id', TEAM_ID).maybeSingle();
-      if (res.error) throw res.error;
-
-      if (res.data && res.data.data && Object.keys(res.data.data).length > 0){
-        // Já tem dados na nuvem → usa
-        state = migrateState(res.data.data);
-        _syncState = 'synced';
-        _lastSyncTime = new Date();
-        updateStorageStatus();
-      } else {
-        // Nuvem vazia → tenta migrar do localStorage antigo
-        var raw = null;
-        try {
-          raw = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_KEY);
-        } catch(e){}
-        if (raw){
-          state = migrateState(JSON.parse(raw));
-          await doSave();
-          try {
-            localStorage.removeItem(STORAGE_KEY);
-            localStorage.removeItem(LEGACY_KEY);
-          } catch(e){}
-          toast('✓ Dados migrados para a nuvem');
-        }
-      }
-    } catch(e){
-      console.error('Erro ao carregar da nuvem:', e);
-      _syncState = 'error';
-      toast('⚠ Sem conexão com a nuvem. Usando modo offline.');
-      // Fallback: usa localStorage se existir
-      try {
-        var raw = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_KEY);
-        if (raw) state = migrateState(JSON.parse(raw));
-      } catch(e2){}
+  // Expor funções para os botões inline do HTML (Logout / Trocar de Time)
+  window.changeTeam = function() {
+    currentTeam = null;
+    updateHeaderUI();
+    if (userTeams.length === 1) {
+      currentTeam = userTeams[0];
+      startApp();
+    } else {
+      renderTeamSelection();
     }
-  }
+  };
+  window.doLogout = function() {
+    sb.auth.signOut();
+  };
 
-  function setupRealtime(){
-    sb.channel('escala-changes-' + TEAM_ID)
-      .on('postgres_changes',
-        { event: '*', schema: 'public', table: 'escala', filter: 'id=eq.' + TEAM_ID },
-        function(payload){
-          // Ignora se temos alterações locais pendentes (evita sobrescrever)
-          if (pendingSave || _saving) return;
-          if (payload.new && payload.new.data){
-            state = migrateState(payload.new.data);
-            renderActive();
-            _syncState = 'synced';
-            _lastSyncTime = new Date();
-            updateStorageStatus();
-            toast('✓ Sincronizado de outro dispositivo');
-          }
-        }
-      )
-      .subscribe();
-  }
-
-  async function initApp(){
-    viewWeek.innerHTML = '<div class="empty-state">Carregando dados da nuvem…</div>';
-    await loadState();
-    renderActive();
-    setupRealtime();
-  }
-
+  // Inicia a aplicação checando a sessão
   initApp();
 })();
