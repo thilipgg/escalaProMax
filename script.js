@@ -902,90 +902,99 @@
   }
 
   function renderSettings() {
-    var h = '';
-    // === NOVA ÁREA DE CONTA ===
-    h += `<div class="settings-section full" style="background:linear-gradient(135deg,#f8fafc,#f1f5f9);border-color:#e2e8f0">
-      <div class="section-head">
-        <div class="section-icon" style="background:#e2e8f0;color:#475569"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
-        <h3 class="section-title">Conta e Equipe</h3>
-      </div>
-      <div class="settings-row"><label>Líder logado</label><span style="font-weight:600;font-size:13px;">${currentUser.email}</span></div>
-      <div class="settings-row"><label>Time atual</label><span style="font-weight:600;font-size:13px;">${currentTeam.name}</span></div>
-      <div style="display:flex;gap:10px;margin-top:15px;">
-        <button class="danger-btn neutral" style="flex:1;" onclick="window.changeTeam()">Trocar de Time</button>
-        <button class="danger-btn" style="flex:1;" onclick="window.doLogout()">Sair da Conta</button>
-      </div>
-    </div>`;
+  var h = '';
+  // === NOVA ÁREA DE CONTA ===
+  h += `<div class="settings-section full" style="background:linear-gradient(135deg,#f8fafc,#f1f5f9);border-color:#e2e8f0">
+    <div class="section-head">
+      <div class="section-icon" style="background:#e2e8f0;color:#475569"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+      <h3 class="section-title">Conta e Equipe</h3>
+    </div>
+    <div class="settings-row"><label>Líder logado</label><span style="font-weight:600;font-size:13px;">${currentUser.email}</span></div>
+    <div class="settings-row"><label>Time atual</label><span style="font-weight:600;font-size:13px;">${currentTeam.name}</span></div>
+    <div style="display:flex;gap:10px;margin-top:15px;">
+      <button class="danger-btn neutral" style="flex:1;" onclick="window.changeTeam()">Trocar de Time</button>
+      <button class="danger-btn" style="flex:1;" onclick="window.doLogout()">Sair da Conta</button>
+    </div>
+  </div>`;
 
-    h += '<div class="settings-section full">' +
-      '<div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></div><h3 class="section-title">Geral</h3></div>' +
-      '<div class="settings-row"><label>Nome do time</label><input type="text" class="team-name-input" id="teamNameInput" value="' + state.teamName.replace(/"/g, '&quot;') + '" style="max-width:280px;flex:1"></div>' +
-      '<div class="settings-row"><label>Sincronização</label><span id="storageStatus" style="font-size:12px;font-weight:700;padding:6px 12px;border-radius:20px;background:#f1f5f9;color:#475569">—</span></div>' +
-      '<div class="settings-row"><label>Forçar envio à nuvem</label><button class="danger-btn neutral" id="forceSyncBtn">Sincronizar agora</button></div></div>';
+  h += '<div class="settings-section full">' +
+    '<div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></div><h3 class="section-title">Geral</h3></div>' +
+    '<div class="settings-row"><label>Nome do time</label><input type="text" class="team-name-input" id="teamNameInput" value="' + state.teamName.replace(/"/g, '&quot;') + '" style="max-width:280px;flex:1"></div>' +
+    '<div class="settings-row"><label>Sincronização</label><span id="storageStatus" style="font-size:12px;font-weight:700;padding:6px 12px;border-radius:20px;background:#f1f5f9;color:#475569">—</span></div>' +
+    '<div class="settings-row"><label>Forçar envio à nuvem</label><button class="danger-btn neutral" id="forceSyncBtn">Sincronizar agora</button></div></div>';
 
-    h += '<div class="settings-section"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div><h3 class="section-title">Colaboradores</h3></div><div class="edit-list" id="employeeList">';
-    state.employees.forEach(function (emp) {
-      h += '<div class="edit-row" data-emp="' + emp.replace(/"/g, '&quot;') + '"><input type="text" class="name-input emp-name" value="' + emp.replace(/"/g, '&quot;') + '" placeholder="Nome"><button class="row-delete" data-del-emp="' + emp.replace(/"/g, '&quot;') + '" title="Remover"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div>';
-    });
-    h += '</div><button class="add-btn" id="addEmployeeBtn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5v14"/></svg> Adicionar colaborador</button></div>';
+  h += '<div class="settings-section"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div><h3 class="section-title">Colaboradores</h3></div><div class="edit-list" id="employeeList">';
+  state.employees.forEach(function (emp) {
+    h += '<div class="edit-row" data-emp="' + emp.replace(/"/g, '&quot;') + '"><input type="text" class="name-input emp-name" value="' + emp.replace(/"/g, '&quot;') + '" placeholder="Nome"><button class="row-delete" data-del-emp="' + emp.replace(/"/g, '&quot;') + '" title="Remover"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div>';
+  });
+  h += '</div><button class="add-btn" id="addEmployeeBtn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5v14"/></svg> Adicionar colaborador</button></div>';
 
-    var workIds = Object.keys(state.shifts).filter(function (k) { return state.shifts[k].type === 'work'; });
-    workIds.sort(function (a, b) { return parseTime(state.shifts[a].start) - parseTime(state.shifts[b].start); });
+  var workIds = Object.keys(state.shifts).filter(function (k) { return state.shifts[k].type === 'work'; });
+  workIds.sort(function (a, b) { return parseTime(state.shifts[a].start) - parseTime(state.shifts[b].start); });
 
-    h += '<div class="settings-section"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><h3 class="section-title">Turnos de Trabalho</h3></div><div class="edit-list" id="workShiftList">';
-    workIds.forEach(function (id) {
-      var s = state.shifts[id];
-      h += '<div class="edit-row" data-shift="' + id + '" data-type="work"><input type="color" class="color-picker shift-color" value="' + s.color + '" title="Cor"><input type="text" class="label-input shift-label" value="' + s.label.replace(/"/g, '&quot;') + '" maxlength="4" title="Rótulo"><input type="time" class="time-input shift-start" value="' + s.start + '" title="Início"><span class="arrow">→</span><input type="time" class="time-input shift-end" value="' + s.end + '" title="Fim"><button class="row-delete" data-del-shift="' + id + '" title="Remover"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div>';
-    });
-    h += '</div><button class="add-btn" id="addWorkShiftBtn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5v14"/></svg> Adicionar turno</button></div>';
+  h += '<div class="settings-section"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><h3 class="section-title">Turnos de Trabalho</h3></div><div class="edit-list" id="workShiftList">';
+  workIds.forEach(function (id) {
+    var s = state.shifts[id];
+    h += '<div class="edit-row" data-shift="' + id + '" data-type="work"><input type="color" class="color-picker shift-color" value="' + s.color + '" title="Cor"><input type="text" class="label-input shift-label" value="' + s.label.replace(/"/g, '&quot;') + '" maxlength="4" title="Rótulo"><input type="time" class="time-input shift-start" value="' + s.start + '" title="Início"><span class="arrow">→</span><input type="time" class="time-input shift-end" value="' + s.end + '" title="Fim"><button class="row-delete" data-del-shift="' + id + '" title="Remover"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div>';
+  });
+  h += '</div><button class="add-btn" id="addWorkShiftBtn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5v14"/></svg> Adicionar turno</button></div>';
 
-    var eventIds = Object.keys(state.shifts).filter(function (k) { return state.shifts[k].type === 'event'; });
-    h += '<div class="settings-section"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82Z"/><line x1="7" x2="7.01" y1="7" y2="7"/></svg></div><h3 class="section-title">Eventos e Folgas</h3></div><div class="edit-list" id="eventShiftList">';
-    eventIds.forEach(function (id) {
-      var s = state.shifts[id];
-      h += '<div class="edit-row" data-shift="' + id + '" data-type="event"><input type="color" class="color-picker shift-color" value="' + s.color + '" title="Cor"><input type="text" class="label-input shift-label" value="' + s.label.replace(/"/g, '&quot;') + '" maxlength="4" title="Rótulo"><input type="text" class="name-input shift-name-input" value="' + s.name.replace(/"/g, '&quot;') + '" placeholder="Nome do evento" title="Nome"><button class="row-delete" data-del-shift="' + id + '" title="Remover"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div>';
-    });
-    h += '</div><button class="add-btn" id="addEventBtn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5v14"/></svg> Adicionar evento</button></div>';
+  var eventIds = Object.keys(state.shifts).filter(function (k) { return state.shifts[k].type === 'event'; });
+  h += '<div class="settings-section"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82Z"/><line x1="7" x2="7.01" y1="7" y2="7"/></svg></div><h3 class="section-title">Eventos e Folgas</h3></div><div class="edit-list" id="eventShiftList">';
+  eventIds.forEach(function (id) {
+    var s = state.shifts[id];
+    h += '<div class="edit-row" data-shift="' + id + '" data-type="event"><input type="color" class="color-picker shift-color" value="' + s.color + '" title="Cor"><input type="text" class="label-input shift-label" value="' + s.label.replace(/"/g, '&quot;') + '" maxlength="4" title="Rótulo"><input type="text" class="name-input shift-name-input" value="' + s.name.replace(/"/g, '&quot;') + '" placeholder="Nome do evento" title="Nome"><button class="row-delete" data-del-shift="' + id + '" title="Remover"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div>';
+  });
+  h += '</div><button class="add-btn" id="addEventBtn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5v14"/></svg> Adicionar evento</button></div>';
 
-    h += '<div class="settings-section full" style="background:linear-gradient(135deg,#eff6ff,#f8fafc);border-color:#bfdbfe"><div class="section-head"><div class="section-icon" style="background:#dbeafe;color:#1e40af"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div><h3 class="section-title" style="color:#1e3a8a">Automação</h3></div><p style="font-size:12.5px;color:#64748b;margin:-4px 0 12px">Preenche o mês com os horários padrão (Seg a Sáb). Domingos e folgas ficam em branco.</p><div class="sub-section-title">Turno padrão por colaborador</div>';
-    state.employees.forEach(function (emp) {
-      var cur = state.defaultShift[emp] || '';
-      var opts = workIds.map(function (id) { return '<option value="' + id + '" ' + (id === cur ? 'selected' : '') + '>' + state.shifts[id].name + '</option>'; }).join('');
-      h += '<div class="settings-row"><label>' + emp + '</label><select class="def-shift" data-emp="' + emp.replace(/"/g, '&quot;') + '">' + opts + '</select></div>';
-    });
-    h += '<button class="btn-auto" id="btnAuto" style="margin-top:14px"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Gerar Escala do Mês</button></div>';
+  h += '<div class="settings-section full" style="background:linear-gradient(135deg,#eff6ff,#f8fafc);border-color:#bfdbfe"><div class="section-head"><div class="section-icon" style="background:#dbeafe;color:#1e40af"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div><h3 class="section-title" style="color:#1e3a8a">Automação</h3></div><p style="font-size:12.5px;color:#64748b;margin:-4px 0 12px">Preenche o mês com os horários padrão (Seg a Sáb). Domingos e folgas ficam em branco.</p><div class="sub-section-title">Turno padrão por colaborador</div>';
+  state.employees.forEach(function (emp) {
+    var cur = state.defaultShift[emp] || '';
+    var opts = workIds.map(function (id) { return '<option value="' + id + '" ' + (id === cur ? 'selected' : '') + '>' + state.shifts[id].name + '</option>'; }).join('');
+    h += '<div class="settings-row"><label>' + emp + '</label><select class="def-shift" data-emp="' + emp.replace(/"/g, '&quot;') + '">' + opts + '</select></div>';
+  });
+  h += '<button class="btn-auto" id="btnAuto" style="margin-top:14px"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Gerar Escala do Mês</button></div>';
 
-    var rule = state.sundayRule;
-    h += '<div class="settings-section full"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg></div><h3 class="section-title">Regras de Escala</h3></div>' +
-      '<div class="settings-row"><label>Máximo de colaboradores no domingo</label><select class="sun-rule-config" data-key="maxWorkers">' + [1, 2, 3, 4, 5].map(function (v) { return '<option value="' + v + '" ' + (rule.maxWorkers == v ? 'selected' : '') + '>' + v + '</option>'; }).join('') + '</select></div>' +
-      '<div class="settings-row"><label>Máximo de domingos consecutivos</label><select class="sun-rule-config" data-key="maxConsecutive">' + [1, 2, 3, 4].map(function (v) { return '<option value="' + v + '" ' + (rule.maxConsecutive == v ? 'selected' : '') + '>' + v + ' Domingo(s)</option>'; }).join('') + '</select></div>' +
-      '<div class="settings-row"><label>Cor do cabeçalho de Domingo</label><input type="color" class="color-picker sunday-color" value="' + (state.colors.SUNDAY ? state.colors.SUNDAY.color : '#ef4444') + '"></div>' +
-      '<div class="sub-section-title">Escala semanal por colaborador</div>';
-    state.employees.forEach(function (emp) {
-      var cur = getEmployeeScale(emp);
-      h += '<div class="settings-row"><label>' + emp + '</label><select class="emp-scale" data-emp="' + emp.replace(/"/g, '&quot;') + '"><option value="6x1" ' + (cur === '6x1' ? 'selected' : '') + '>6x1 — 1 folga/semana</option><option value="5x2" ' + (cur === '5x2' ? 'selected' : '') + '>5x2 — 2 folgas/semana</option><option value="off" ' + (cur === 'off' ? 'selected' : '') + '>Não verificar</option></select></div>';
-    });
-    h += '</div>';
+  var rule = state.sundayRule;
+  h += '<div class="settings-section full"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg></div><h3 class="section-title">Regras de Escala</h3></div>' +
+    '<div class="settings-row"><label>Máximo de colaboradores no domingo</label><select class="sun-rule-config" data-key="maxWorkers">' + [1, 2, 3, 4, 5].map(function (v) { return '<option value="' + v + '" ' + (rule.maxWorkers == v ? 'selected' : '') + '>' + v + '</option>'; }).join('') + '</select></div>' +
+    '<div class="settings-row"><label>Máximo de domingos consecutivos</label><select class="sun-rule-config" data-key="maxConsecutive">' + [1, 2, 3, 4].map(function (v) { return '<option value="' + v + '" ' + (rule.maxConsecutive == v ? 'selected' : '') + '>' + v + ' Domingo(s)</option>'; }).join('') + '</select></div>' +
+    '<div class="settings-row"><label>Cor do cabeçalho de Domingo</label><input type="color" class="color-picker sunday-color" value="' + (state.colors.SUNDAY ? state.colors.SUNDAY.color : '#ef4444') + '"></div>' +
+    '<div class="sub-section-title">Escala semanal por colaborador</div>';
+  state.employees.forEach(function (emp) {
+    var cur = getEmployeeScale(emp);
+    h += '<div class="settings-row"><label>' + emp + '</label><select class="emp-scale" data-emp="' + emp.replace(/"/g, '&quot;') + '"><option value="6x1" ' + (cur === '6x1' ? 'selected' : '') + '>6x1 — 1 folga/semana</option><option value="5x2" ' + (cur === '5x2' ? 'selected' : '') + '>5x2 — 2 folgas/semana</option><option value="off" ' + (cur === 'off' ? 'selected' : '') + '>Não verificar</option></select></div>';
+  });
+  h += '</div>';
 
-    h += '<div class="settings-section"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></div><h3 class="section-title">Feriados</h3></div>';
-    var sorted = Object.keys(state.holidays).sort();
-    if (sorted.length === 0) h += '<p style="font-size:12.5px;color:var(--muted);padding:8px 0">Nenhum feriado cadastrado.</p>';
-    h += '<div class="holiday-list">';
-    sorted.forEach(function (k) {
-      var p = k.split('-');
-      h += '<div class="holiday-item"><span>' + p[2] + '/' + p[1] + '/' + p[0] + ' — ' + state.holidays[k] + '</span><button data-del-hol="' + k + '">remover</button></div>';
-    });
-    h += '</div><div class="add-holiday"><input type="date" id="newHolDate"><input type="text" id="newHolName" placeholder="Nome do feriado"><button id="addHolBtn">Adicionar</button></div></div>';
+  h += '<div class="settings-section"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></div><h3 class="section-title">Feriados</h3></div>';
+  var sorted = Object.keys(state.holidays).sort();
+  if (sorted.length === 0) h += '<p style="font-size:12.5px;color:var(--muted);padding:8px 0">Nenhum feriado cadastrado.</p>';
+  h += '<div class="holiday-list">';
+  sorted.forEach(function (k) {
+    var p = k.split('-');
+    h += '<div class="holiday-item"><span>' + p[2] + '/' + p[1] + '/' + p[0] + ' — ' + state.holidays[k] + '</span><button data-del-hol="' + k + '">remover</button></div>';
+  });
+  h += '</div><div class="add-holiday"><input type="date" id="newHolDate"><input type="text" id="newHolName" placeholder="Nome do feriado"><button id="addHolBtn">Adicionar</button></div></div>';
 
-    h += '<div class="settings-section full"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5M3 12a9 3 0 0 0 18 0"/></svg></div><h3 class="section-title">Dados / Backup</h3></div>' +
-      '<div class="settings-row"><label>Exportar backup completo</label><button class="danger-btn neutral" id="downloadCsvBtn">Baixar CSV</button></div>' +
-      '<div class="settings-row"><label>Importar backup</label><button class="danger-btn success" id="importBtn">Importar</button></div>' +
-      '<div class="settings-row"><label>Limpar escala do mês atual</label><button class="danger-btn" id="clearMonthBtn">Limpar</button></div>' +
-      '<div class="settings-row"><label>Apagar todos os dados</label><button class="danger-btn" id="resetBtn">Apagar</button></div></div>';
+  // ===== DADOS / BACKUP (com input file oculto para o botão Importar) =====
+  h += '<div class="settings-section full">' +
+    '<div class="section-head">' +
+      '<div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5M3 12a9 3 0 0 0 18 0"/></svg></div>' +
+      '<h3 class="section-title">Dados / Backup</h3>' +
+    '</div>' +
+    '<div class="settings-row"><label>Exportar backup completo</label><button class="danger-btn neutral" id="downloadCsvBtn">Baixar CSV</button></div>' +
+    '<div class="settings-row"><label>Importar backup</label>' +
+      '<button class="danger-btn success" id="importBtn">Importar</button>' +
+      '<input type="file" id="importFile" accept=".csv,text/csv" style="display:none">' +
+    '</div>' +
+    '<div class="settings-row"><label>Limpar escala do mês atual</label><button class="danger-btn" id="clearMonthBtn">Limpar</button></div>' +
+    '<div class="settings-row"><label>Apagar todos os dados</label><button class="danger-btn" id="resetBtn">Apagar</button></div>' +
+  '</div>';
 
-    viewSettings.innerHTML = h;
-    updateStorageStatus();
-  }
+  viewSettings.innerHTML = h;
+  updateStorageStatus();
+}
 
   function renderActive() {
     renderHeader();
