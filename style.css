@@ -25,7 +25,7 @@
 html,body{margin:0;padding:0;height:100dvh;overflow:hidden}
 
 /* Esconde barras de rolagem mantendo o scroll funcional */
-::-webkit-scrollbar{display:none}
+::-webkit-scrollbar{display:none;width:0;height:0}
 *{scrollbar-width:none;-ms-overflow-style:none}
 
 body{
@@ -85,8 +85,17 @@ main{
 .view{display:none}
 .view.active{display:block}
 
-/* Views que devem preencher o espaço vertical completamente */
-#view-week.active, #view-month.active {
+/* ===== Views ===== */
+/* Semana: ajusta-se ao viewport — todas as linhas visíveis, sem scroll vertical. */
+#view-week.active {
+  display:flex;
+  flex-direction:column;
+  flex:1;
+  min-height:0;
+  padding-bottom:clamp(24px, 2vw, 40px);
+}
+/* Mês: scroll interno próprio (grid-scroll). */
+#view-month.active {
   display:flex;
   flex-direction:column;
   flex:1;
@@ -98,11 +107,12 @@ main{
 .week-grid{
   display:grid;
   grid-template-columns: var(--wk-name-w) repeat(7, minmax(0, 1fr));
-  grid-template-rows:auto;
-  grid-auto-rows:minmax(min-content, 1fr); /* Faz as linhas esticarem para preencher a tela */
+  grid-template-rows:auto;              /* linha do cabeçalho (dias) fica auto */
+  grid-auto-rows: minmax(0, 1fr);       /* linhas dos colaboradores dividem o espaço restante */
   gap:1px;background:var(--border);border-radius:var(--radius);overflow:hidden;
   margin:0 var(--space-page);box-shadow:var(--shadow-sm);border:1px solid var(--border);
   flex:1;
+  min-height:0;
 }
 .wk-corner{background:var(--surface-2)}
 .wk-day-head{background:var(--surface-2);padding:clamp(6px, 0.8vw, 12px) clamp(2px, 0.4vw, 6px);text-align:center;border-bottom:1px solid var(--border);position:relative}
@@ -114,8 +124,8 @@ main{
 .wk-day-head.today.missing-essential{box-shadow:inset 0 -3px 0 var(--primary),inset 0 -6px 0 var(--danger)}
 .wk-dow{display:block;font-size:clamp(7.5px, 0.6vw, 11px);color:var(--muted);text-transform:uppercase;font-weight:700;letter-spacing:.06em}
 .wk-num{display:block;font-size:clamp(13px, 1.1vw, 18px);font-weight:700;margin-top:2px}
-.wk-emp{background:var(--surface);padding:clamp(8px, 1vw, 16px) clamp(3px, 0.4vw, 8px);font-size:clamp(9.5px, 0.85vw, 13.5px);font-weight:700;display:flex;align-items:center;justify-content:center;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-right:1px solid var(--border);color:var(--text-secondary)}
-.wk-cell{background:var(--surface);height:100%;min-height:clamp(46px, 5.5vw, 82px);font-size:clamp(13px, 0.9vw + 8px, 18px);font-weight:700;display:flex;align-items:center;justify-content:center;border:none;position:relative;transition:filter .12s, transform .12s;cursor:pointer;overflow:hidden}
+.wk-emp{background:var(--surface);padding:clamp(4px, 0.7vw, 12px) clamp(3px, 0.4vw, 8px);font-size:clamp(9.5px, 0.85vw, 13.5px);font-weight:700;display:flex;align-items:center;justify-content:center;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-right:1px solid var(--border);color:var(--text-secondary)}
+.wk-cell{background:var(--surface);height:100%;min-height:0;font-size:clamp(13px, 0.9vw + 8px, 18px);font-weight:700;display:flex;align-items:center;justify-content:center;border:none;position:relative;transition:filter .12s, transform .12s;cursor:pointer;overflow:hidden;line-height:1}
 .wk-cell.holiday{background:var(--primary) !important}
 .wk-cell:hover{filter:brightness(.96);transform:scale(.96)}
 .wk-cell:active{transform:scale(.93)}
@@ -403,7 +413,7 @@ main{
     --sticky-col-w: 72px;
     --day-min-w: 26px;
   }
-  .wk-emp{font-size:8.5px;padding:6px 2px}
+  .wk-emp{font-size:8.5px;padding:4px 2px}
   .wk-dow{font-size:7px;letter-spacing:.02em}
   .wk-num{font-size:12px}
   .wk-cell{font-size:12px}
@@ -462,7 +472,7 @@ main{
   }
 
   /* Grade Semanal */
-  .week-grid{display:grid !important;flex:none !important;grid-template-columns:72px repeat(7,1fr) !important;grid-auto-rows:auto !important;gap:1px !important;background:#64748b !important;border:1px solid #64748b !important;border-radius:0 !important;box-shadow:none !important;margin:0 !important;page-break-inside:avoid;}
+  .week-grid{display:grid !important;flex:none !important;grid-template-columns:72px repeat(7,1fr) !important;grid-template-rows:auto !important;grid-auto-rows:auto !important;gap:1px !important;background:#64748b !important;border:1px solid #64748b !important;border-radius:0 !important;box-shadow:none !important;margin:0 !important;min-height:0 !important;page-break-inside:avoid;}
   .wk-corner, .wk-day-head, .wk-emp, .wk-cell {border:none !important;background-color:#fff !important;height:auto !important;min-height:32px !important;}
   .wk-day-head, .wk-corner { background-color:#f1f5f9 !important; }
   .wk-day-head.weekend { background-color:#eef4ff !important; }
