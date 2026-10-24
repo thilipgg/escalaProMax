@@ -287,6 +287,74 @@ main{
 /* ===== PRINT HEADER/FOOTER (hidden on screen) ===== */
 .print-header,.print-footer{display:none}
 
+
+/* ===== TELA DE LOGIN ===== */
+.auth-wrap{
+  width:100%;
+  padding:20px;
+  box-sizing:border-box;
+  display:flex;
+  justify-content:center;
+  align-items:flex-start;
+}
+.auth-card{
+  width:100%;
+  max-width:400px;
+  padding:24px;
+  background:var(--surface);
+  border-radius:var(--radius);
+  box-shadow:var(--shadow-md);
+  border:1px solid var(--border);
+  box-sizing:border-box;
+}
+.auth-title{
+  margin:0 0 18px;
+  font-size:20px;
+  font-weight:700;
+  text-align:center;
+}
+.auth-field{margin-bottom:12px}
+.auth-field label{
+  display:block;
+  font-size:12px;
+  font-weight:600;
+  margin-bottom:4px;
+}
+.auth-field input{
+  width:100%;
+  padding:10px 12px;
+  border:1px solid #cbd5e1;
+  border-radius:8px;
+  box-sizing:border-box;
+  font-family:inherit;
+  font-size:14px;
+  background:var(--surface);
+}
+.auth-field input:focus{
+  outline:none;
+  border-color:var(--primary);
+  box-shadow:0 0 0 3px rgba(37,99,235,.12);
+}
+.auth-error{
+  color:var(--danger);
+  font-size:12.5px;
+  text-align:center;
+  margin-top:10px;
+  font-weight:600;
+  min-height:18px;
+  line-height:1.4;
+}
+.auth-card .btn-auto,
+.auth-card .add-btn{
+  width:100%;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  cursor:pointer;
+}
+.auth-card .btn-auto{margin-bottom:10px;height:48px}
+.auth-card .add-btn{margin-top:0}
+
 /* ===== LAYOUT FLEXÍVEL (Resumo / Ajustes) em qualquer largura ===== */
 @media (min-width: 640px){
   .summary{
