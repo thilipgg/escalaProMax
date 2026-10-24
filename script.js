@@ -1,6 +1,21 @@
 (function(){
   'use strict';
 
+  // ===== CONFIG SUPABASE =====
+  // Troque pelos dados do seu projeto (Project Settings → API)
+  var SUPABASE_URL  = 'https://ucinnkobjqlhxaobmdbp.supabase.co';
+  var SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVjaW5ua29ianFsaHhhb2JtZGJwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI4MzIzNjQsImV4cCI6MjEwODQwODM2NH0.N0w2ddm7WoUZU6F_dYT46gsIBFCsWC14ZzwTo3eLQmg';
+  var TEAM_ID       = 'equipe-ti-filipe'; // mesmo id do INSERT do SQL
+
+  var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+
+  // Estado de sincronização (usado no Ajustes → "Sincronização com a nuvem")
+  var _syncState = 'idle';     // 'idle' | 'pending' | 'saving' | 'synced' | 'error'
+  var _lastSyncTime = null;
+  var pendingSave = false;
+  var _saving = false;
+  var saveTimer = null;
+
   var DOW = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
   var MONTHS = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
   var STORAGE_KEY = 'escala.v4';
@@ -97,59 +112,88 @@
     return s;
   }
 
-  var state = getDefaultState();
-  try {
-    var raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) raw = localStorage.getItem(LEGACY_KEY);
-    if (raw) state = migrateState(JSON.parse(raw));
-  } catch(e){
-    console.error('Não foi possível carregar os dados salvos:', e);
+    var state = getDefaultState();
+  // O carregamento real acontece de forma assíncrona em loadState() (ver initApp)
+
+  // ===== SALVAMENTO NA NUVEM (Supabase, com debounce) =====
+  function save(){
+    pendingSave = true;
+    _syncState = 'pending';
+    updateStorageStatus();
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(function(){ doSave(); }, 600);
   }
 
-  // ===== SALVAMENTO REFORÇADO NO LOCALSTORAGE =====
-  function save(){
+  async function doSave(){
+    if (!pendingSave || _saving) return;
+    pendingSave = false;
+    _saving = true;
+    _syncState = 'saving';
+    updateStorageStatus();
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      var res = await sb.from('escala').upsert({
+        id: TEAM_ID,
+        data: state,
+        updated_at: new Date().toISOString()
+      });
+      if (res.error) throw res.error;
+      _lastSyncTime = new Date();
+      _syncState = 'synced';
       updateStorageStatus();
     } catch(e){
-      console.error('Erro ao salvar no localStorage:', e);
-      if (e.name === 'QuotaExceededError' || e.code === 22){
-        toast('⚠ Armazenamento cheio. Exporte um backup e limpe dados antigos.');
-      } else if (e.name === 'SecurityError'){
-        toast('⚠ Navegador bloqueou o salvamento (modo privado?).');
-      } else {
-        toast('⚠ Não foi possível salvar automaticamente.');
-      }
+      console.error('Erro ao salvar na nuvem:', e);
+      _syncState = 'error';
       updateStorageStatus();
+      pendingSave = true;
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(function(){ doSave(); }, 5000); // retry 5s
+    } finally {
+      _saving = false;
     }
   }
 
-  function updateStorageStatus(){
+    function updateStorageStatus(mode){
+    if (mode) _syncState = mode;
     var el = document.getElementById('storageStatus');
     if (!el) return;
-    try {
-      var testKey = '__storage_test__';
-      localStorage.setItem(testKey, '1');
-      localStorage.removeItem(testKey);
-      var bytes = new Blob([JSON.stringify(state)]).size;
-      var kb = (bytes / 1024).toFixed(1);
-      el.textContent = '✓ Ativo · ' + kb + ' KB';
+    var now = _lastSyncTime || new Date();
+    var timeStr = pad(now.getHours()) + ':' + pad(now.getMinutes());
+
+    if (_syncState === 'pending'){
+      el.textContent = '⟳ Alterações pendentes';
+      el.style.background = '#fef3c7';
+      el.style.color = '#92400e';
+    } else if (_syncState === 'saving'){
+      el.textContent = '⟳ Sincronizando...';
+      el.style.background = '#fef3c7';
+      el.style.color = '#92400e';
+    } else if (_syncState === 'synced'){
+      el.textContent = '✓ Nuvem · ' + timeStr;
       el.style.background = '#dcfce7';
       el.style.color = '#166534';
-    } catch(e){
-      el.textContent = '✗ Bloqueado';
+    } else if (_syncState === 'error'){
+      el.textContent = '✗ Erro de sincronização';
       el.style.background = '#fee2e2';
       el.style.color = '#991b1b';
+    } else {
+      el.textContent = '—';
+      el.style.background = '#f1f5f9';
+      el.style.color = '#475569';
     }
   }
 
+  // Flush de alterações pendentes ao sair/ocultar a aba
   document.addEventListener('visibilitychange', function(){
-    if (document.visibilityState === 'hidden'){
-      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch(e){}
+    if (document.visibilityState === 'hidden' && pendingSave){
+      clearTimeout(saveTimer);
+      doSave();
     }
   });
   window.addEventListener('pagehide', function(){
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch(e){}
+    if (pendingSave){
+      clearTimeout(saveTimer);
+      doSave();
+    }
   });
 
   function pad(n){ return String(n).padStart(2,'0'); }
@@ -678,8 +722,11 @@
       '<div class="settings-row"><label>Nome da equipe / setor</label>' +
         '<input type="text" class="team-name-input" id="teamNameInput" value="' + state.teamName.replace(/"/g,'&quot;') + '" style="max-width:280px;flex:1">' +
       '</div>' +
-      '<div class="settings-row"><label>Armazenamento no navegador</label>' +
+            '<div class="settings-row"><label>Sincronização com a nuvem</label>' +
         '<span id="storageStatus" style="font-size:12px;font-weight:700;padding:6px 12px;border-radius:20px;background:#f1f5f9;color:#475569">—</span>' +
+      '</div>' +
+      '<div class="settings-row"><label>Forçar envio à nuvem</label>' +
+        '<button class="danger-btn neutral" id="forceSyncBtn">Sincronizar agora</button>' +
       '</div>' +
     '</div>';
 
@@ -1364,6 +1411,15 @@
     if (t.id === 'addWorkShiftBtn'){ addWorkShift(); return; }
     if (t.id === 'addEventBtn'){ addEvent(); return; }
     if (t.id === 'btnAuto'){ autoFill(); return; }
+        if (t.id === 'forceSyncBtn'){
+      pendingSave = true;
+      _syncState = 'pending';
+      updateStorageStatus();
+      doSave().then(function(){
+        if (_syncState === 'synced') toast('✓ Sincronizado');
+      });
+      return;
+    }
     if (t.id === 'downloadCsvBtn'){ downloadCSV(); return; }
     if (t.id === 'importBtn'){ document.getElementById('importFile').click(); return; }
     if (t.id === 'addHolBtn'){
@@ -1404,5 +1460,72 @@
     }
   });
 
-  renderActive();
+    // ===== CARREGAMENTO INICIAL + REALTIME =====
+  async function loadState(){
+    try {
+      var res = await sb.from('escala').select('data').eq('id', TEAM_ID).maybeSingle();
+      if (res.error) throw res.error;
+
+      if (res.data && res.data.data && Object.keys(res.data.data).length > 0){
+        // Já tem dados na nuvem → usa
+        state = migrateState(res.data.data);
+        _syncState = 'synced';
+        _lastSyncTime = new Date();
+        updateStorageStatus();
+      } else {
+        // Nuvem vazia → tenta migrar do localStorage antigo
+        var raw = null;
+        try {
+          raw = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_KEY);
+        } catch(e){}
+        if (raw){
+          state = migrateState(JSON.parse(raw));
+          await doSave();
+          try {
+            localStorage.removeItem(STORAGE_KEY);
+            localStorage.removeItem(LEGACY_KEY);
+          } catch(e){}
+          toast('✓ Dados migrados para a nuvem');
+        }
+      }
+    } catch(e){
+      console.error('Erro ao carregar da nuvem:', e);
+      _syncState = 'error';
+      toast('⚠ Sem conexão com a nuvem. Usando modo offline.');
+      // Fallback: usa localStorage se existir
+      try {
+        var raw = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_KEY);
+        if (raw) state = migrateState(JSON.parse(raw));
+      } catch(e2){}
+    }
+  }
+
+  function setupRealtime(){
+    sb.channel('escala-changes-' + TEAM_ID)
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'escala', filter: 'id=eq.' + TEAM_ID },
+        function(payload){
+          // Ignora se temos alterações locais pendentes (evita sobrescrever)
+          if (pendingSave || _saving) return;
+          if (payload.new && payload.new.data){
+            state = migrateState(payload.new.data);
+            renderActive();
+            _syncState = 'synced';
+            _lastSyncTime = new Date();
+            updateStorageStatus();
+            toast('✓ Sincronizado de outro dispositivo');
+          }
+        }
+      )
+      .subscribe();
+  }
+
+  async function initApp(){
+    viewWeek.innerHTML = '<div class="empty-state">Carregando dados da nuvem…</div>';
+    await loadState();
+    renderActive();
+    setupRealtime();
+  }
+
+  initApp();
 })();
