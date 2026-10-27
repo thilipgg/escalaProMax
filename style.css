@@ -435,7 +435,6 @@ main{
 @media print {
   *{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important}
 
-  /* Reseta limites de altura/rolagem */
   html,body{
     background:#fff !important;
     font-size:10pt;
@@ -466,17 +465,16 @@ main{
   .print-period{font-size:11pt;color:#475569;margin-top:3px;font-weight:600;text-transform:capitalize;}
   .print-footer{display:block !important;margin-top:10px;padding-top:6px;border-top:1px solid #cbd5e1;font-size:7.5pt;color:#64748b;text-align:center;font-weight:500;}
 
-  /* Grade Semanal — cores originais preservadas (fundo/letra dos turnos e folgas) */
+  /* ===== GRADE SEMANAL ===== */
   .week-grid{display:grid !important;flex:none !important;grid-template-columns:72px repeat(7,1fr) !important;grid-template-rows:auto !important;grid-auto-rows:auto !important;gap:1px !important;background:#64748b !important;border:1px solid #64748b !important;border-radius:0 !important;box-shadow:none !important;margin:0 !important;min-height:0 !important;page-break-inside:avoid;}
   .wk-corner, .wk-day-head, .wk-emp, .wk-cell {border:none !important;height:auto !important;min-height:32px !important;box-shadow:none !important;}
   .wk-dow{font-size:7pt !important;letter-spacing:.02em !important;}
   .wk-num{font-size:11pt !important;margin-top:0 !important;line-height:1.1;}
   .wk-emp{font-size:9pt !important;padding:6px 4px !important;}
-  .wk-cell{font-size:11pt !important;}
   .wk-cell:hover{transform:none !important;filter:none !important;}
-  .sun-count,.has-warning::after{display:none !important;}
+  .sun-count{display:none !important;}
 
-  /* Grade Mensal — cores originais preservadas */
+  /* ===== GRADE MENSAL ===== */
   .grid-scroll{display:block !important;flex:none !important;overflow:visible !important;max-height:none !important;margin:0 !important;border-radius:0 !important;box-shadow:none !important;border:none !important;page-break-inside:avoid;}
   .grid-table{border-collapse:collapse !important;border-spacing:0 !important;font-size:7.5pt !important;width:100% !important;table-layout:fixed !important;height:auto !important;}
   .grid-table th,.grid-table td{height:22px !important;padding:0 !important;border:1px solid #64748b !important;font-size:7.5pt !important;box-shadow:none !important;}
@@ -484,10 +482,52 @@ main{
   .grid-table thead th .dow{font-size:6pt !important;padding-bottom:2px !important;letter-spacing:0 !important;line-height:1;}
   .grid-table .sticky-col{position:static !important;width:60px !important;min-width:60px !important;padding-left:4px !important;font-size:8pt !important;box-shadow:none !important;}
   .grid-table thead .sticky-col{font-size:7pt !important}
-  .grid-table td.cell{font-size:8pt !important;}
   .grid-table td.cell:hover{transform:none !important;filter:none !important;}
 
-  /* Legenda */
+  /* ===== CONTEÚDO DAS CÉLULAS NA IMPRESSÃO ===== */
+  /* 1) Esconde o texto original (horários e letras de turno) */
+  .week-grid .wk-cell,
+  .grid-table td.cell { font-size: 0 !important; color: transparent !important; }
+
+  /* 2) Esconde a bolinha de aviso */
+  .has-warning::after { display: none !important; }
+
+  /* 3) Injeta o texto de impressão (D, F6, T ou vazio) */
+  .week-grid .wk-cell[data-print]::after,
+  .grid-table td.cell[data-print]::after {
+    content: attr(data-print) !important;
+    display: block !important;
+    position: static !important;
+    font-size: 11pt !important;
+    font-weight: 900 !important;
+    color: #0f172a !important;
+    line-height: 1 !important;
+    background: none !important;
+    box-shadow: none !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    width: auto !important;
+    height: auto !important;
+    top: auto !important;
+    right: auto !important;
+    text-align: center !important;
+  }
+  .grid-table td.cell[data-print]::after { font-size: 8pt !important; }
+
+  /* 4) Fundos por tipo */
+  .week-grid .wk-cell[data-print=""],
+  .grid-table td.cell[data-print=""] { background: #fff !important; }
+
+  .week-grid .wk-cell[data-print="T"],
+  .grid-table td.cell[data-print="T"] { background: #fff !important; }
+
+  .week-grid .wk-cell[data-print="D"],
+  .grid-table td.cell[data-print="D"] { background: #fef08a !important; }
+
+  .week-grid .wk-cell[data-print="F6"],
+  .grid-table td.cell[data-print="F6"] { background: #4ade80 !important; }
+
+  /* ===== LEGENDA ===== */
   .legend{display:flex !important;flex-wrap:wrap !important;gap:5px !important;padding:8px 0 0 !important;margin:0 !important;page-break-inside:avoid;}
   .legend-item{font-size:7pt !important;padding:3px 7px !important;box-shadow:none !important;border:1px solid #64748b !important;}
   .legend-dot{width:11px !important;height:11px !important;font-size:6pt !important;border:1px solid rgba(0,0,0,.25) !important;}
