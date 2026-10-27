@@ -435,7 +435,7 @@ main{
 @media print {
   *{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important}
 
-  /* Reseta os limites de altura e rolagem para a impressão */
+  /* Reseta limites de altura/rolagem */
   html,body{
     background:#fff !important;
     font-size:10pt;
@@ -466,18 +466,9 @@ main{
   .print-period{font-size:11pt;color:#475569;margin-top:3px;font-weight:600;text-transform:capitalize;}
   .print-footer{display:block !important;margin-top:10px;padding-top:6px;border-top:1px solid #cbd5e1;font-size:7.5pt;color:#64748b;text-align:center;font-weight:500;}
 
-  *, *::before, *::after {color: #000000 !important;text-shadow: none !important;}
-  .week-grid, .wk-cell, .wk-day-head, .wk-emp, .grid-table, .grid-table th, .grid-table td, .grid-table th *, .grid-table td * {
-    background-color: transparent !important;box-shadow: none !important;
-  }
-
-  /* Grade Semanal */
+  /* Grade Semanal — cores originais preservadas (fundo/letra dos turnos e folgas) */
   .week-grid{display:grid !important;flex:none !important;grid-template-columns:72px repeat(7,1fr) !important;grid-template-rows:auto !important;grid-auto-rows:auto !important;gap:1px !important;background:#64748b !important;border:1px solid #64748b !important;border-radius:0 !important;box-shadow:none !important;margin:0 !important;min-height:0 !important;page-break-inside:avoid;}
-  .wk-corner, .wk-day-head, .wk-emp, .wk-cell {border:none !important;background-color:#fff !important;height:auto !important;min-height:32px !important;}
-  .wk-day-head, .wk-corner { background-color:#f1f5f9 !important; }
-  .wk-day-head.weekend { background-color:#eef4ff !important; }
-  .wk-day-head.holiday { background-color:#cbd5e1 !important; }
-  .wk-cell.holiday { background-color:#e2e8f0 !important; }
+  .wk-corner, .wk-day-head, .wk-emp, .wk-cell {border:none !important;height:auto !important;min-height:32px !important;box-shadow:none !important;}
   .wk-dow{font-size:7pt !important;letter-spacing:.02em !important;}
   .wk-num{font-size:11pt !important;margin-top:0 !important;line-height:1.1;}
   .wk-emp{font-size:9pt !important;padding:6px 4px !important;}
@@ -485,24 +476,19 @@ main{
   .wk-cell:hover{transform:none !important;filter:none !important;}
   .sun-count,.has-warning::after{display:none !important;}
 
-  /* Grade Mensal */
+  /* Grade Mensal — cores originais preservadas */
   .grid-scroll{display:block !important;flex:none !important;overflow:visible !important;max-height:none !important;margin:0 !important;border-radius:0 !important;box-shadow:none !important;border:none !important;page-break-inside:avoid;}
   .grid-table{border-collapse:collapse !important;border-spacing:0 !important;font-size:7.5pt !important;width:100% !important;table-layout:fixed !important;height:auto !important;}
-  .grid-table th,.grid-table td{height:22px !important;padding:0 !important;border:1px solid #64748b !important;font-size:7.5pt !important;}
-  .grid-table thead th { background-color:#f1f5f9 !important; }
-  .grid-table thead th.weekend { background-color:#eef4ff !important; }
-  .grid-table thead th.holiday { background-color:#cbd5e1 !important; }
-  .grid-table td.weekend { background-color:#f8fafc !important; }
-  .grid-table td.holiday { background-color:#e2e8f0 !important;font-weight: 900 !important;}
+  .grid-table th,.grid-table td{height:22px !important;padding:0 !important;border:1px solid #64748b !important;font-size:7.5pt !important;box-shadow:none !important;}
   .grid-table thead th .dnum{font-size:8pt !important;padding-top:2px !important;line-height:1;}
   .grid-table thead th .dow{font-size:6pt !important;padding-bottom:2px !important;letter-spacing:0 !important;line-height:1;}
-  .grid-table .sticky-col{position:static !important;width:60px !important;min-width:60px !important;padding-left:4px !important;font-size:8pt !important;background:#f8fafc !important;box-shadow:none !important;}
-  .grid-table thead .sticky-col{background:#f1f5f9 !important;font-size:7pt !important}
+  .grid-table .sticky-col{position:static !important;width:60px !important;min-width:60px !important;padding-left:4px !important;font-size:8pt !important;box-shadow:none !important;}
+  .grid-table thead .sticky-col{font-size:7pt !important}
   .grid-table td.cell{font-size:8pt !important;}
   .grid-table td.cell:hover{transform:none !important;filter:none !important;}
 
   /* Legenda */
   .legend{display:flex !important;flex-wrap:wrap !important;gap:5px !important;padding:8px 0 0 !important;margin:0 !important;page-break-inside:avoid;}
-  .legend-item{font-size:7pt !important;padding:3px 7px !important;box-shadow:none !important;border:1px solid #64748b !important;background:#fff !important;}
-  .legend-dot{width:11px !important;height:11px !important;font-size:6pt !important;border: 1px solid #000 !important;}
+  .legend-item{font-size:7pt !important;padding:3px 7px !important;box-shadow:none !important;border:1px solid #64748b !important;}
+  .legend-dot{width:11px !important;height:11px !important;font-size:6pt !important;border:1px solid rgba(0,0,0,.25) !important;}
 }
