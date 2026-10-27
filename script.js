@@ -703,12 +703,19 @@
       for (var l = 0; l < days.length; l++) {
         var d = days[l], key = keyOf(d);
         var code = (state.schedule[key] || {})[emp] || '';
-        var s = getShift(code);
-        var style = '';
-        if (s) {
-          if (s.type === 'work') style = 'color:' + (isHoliday(key) ? '#fff' : s.text) + ';';
-          else style = 'background:' + s.color + ';color:' + s.text + ';';
-        }
+var s = getShift(code);
+var style = '';
+if (s) {
+  if (s.type === 'work') {
+    style = 'color:' + (isHoliday(key) ? '#fff' : s.text) + ';';
+  } else if (d.getDay() === 0) {
+    // Domingo + folga: letra amarela sobre o vermelho do domingo
+    var sunColor = (state.colors.SUNDAY || { color: '#ef4444' }).color;
+    style = 'background:' + sunColor + ';color:#facc15;font-weight:900;';
+  } else {
+    style = 'background:' + s.color + ';color:' + s.text + ';';
+  }
+}
         var w = code && getWarningsForCell(emp, key, code).length > 0;
         var holidayClass = isHoliday(key) ? 'holiday' : '';
         h += '<button class="wk-cell ' + holidayClass + ' ' + (w ? 'has-warning' : '') + '" data-emp="' + emp + '" data-date="' + key + '" style="' + style + '">' + (s ? s.label : '') + '</button>';
