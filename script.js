@@ -717,35 +717,88 @@
           }
         }
         var w = code && getWarningsForCell(emp, key, code).length > 0;
-        var holidayClass = isHoliday(key) ? 'holiday' : '';
-        h += '<button class="wk-cell ' + holidayClass + ' ' + (w ? 'has-warning' : '') + '" data-emp="' + emp + '" data-date="' + key + '" style="' + style + '">' + (s ? s.label : '') + '</button>';
-      }
-    }
-    h += '</div>';
-
-    var weekStart = getWeekStart(currentDate);
-    var anyPlanned = false;
-    var folgaIssues = [];
-    var folgaOkList = [];
-    state.employees.forEach(function (emp) {
-      var scale = getEmployeeScale(emp);
-      var req = requiredFolgas(scale);
-      var info = getWeekFolgas(emp, weekStart);
-      if (info.planned) anyPlanned = true;
-      if (req > 0 && info.planned) {
-        if (info.folgas + info.empty < req) folgaIssues.push({ emp: emp, folgas: info.folgas, req: req, scale: scale });
-        else if (info.folgas >= req) folgaOkList.push(emp + ': ' + info.folgas + '/' + req);
-      }
-    });
-    if (folgaIssues.length) {
-      h += '<div class="week-alerts"><div class="warn-card"><h3>⚠ Folgas da Semana (Seg–Dom)</h3><ul>' +
-        folgaIssues.map(function (w) { return '<li><strong>' + w.emp + '</strong>: ' + w.folgas + ' folga(s) — precisa ' + w.req + ' (escala ' + w.scale + ')</li>'; }).join('') +
-        '</ul></div></div>';
-    } else if (anyPlanned && folgaOkList.length) {
-      h += '<div class="week-alerts"><div class="warn-card ok"><h3>✓ Folgas em dia (Seg–Dom)</h3><div style="font-size:12.5px;color:#166534;line-height:1.7">' + folgaOkList.join(' · ') + '</div></div></div>';
-    }
-    viewWeek.innerHTML = h;
+function renderWeek() {
+  if (!state.employees || state.employees.length === 0) {
+    viewWeek.innerHTML = emptyStateHTML('Nenhum colaborador cadastrado. Adicione em <strong>Ajustes</strong>.');
+    return;
   }
+  var start = getWeekStart(currentDate);
+  var days = [];
+  for (var i = 0; i < 7; i++) { var d = new Date(start); d.setDate(start.getDate() + i); days.push(d); }
+  var todayStr = new Date().toDateString();
+  var h = '<div class="week-grid"><div class="wk-corner"></div>';
+  for (var j = 0; j < days.length; j++) {
+    var d = days[j], key = keyOf(d), dow = d.getDay();
+    var miss = checkEssentialShifts(key);
+    var missClass = (miss.missing06 || miss.missing14) ? 'missing-essential' : '';
+    var cls = [dow === 0 || dow === 6 ? 'weekend' : '', isHoliday(key) ? 'holiday' : '', d.toDateString() === todayStr ? 'today' : '', missClass].filter(Boolean).join(' ');
+    var headStyle = '';
+    if (dow === 0) {
+      var sun = state.colors.SUNDAY || { color: '#ef4444', text: '#ffffff' };
+      headStyle = 'background:' + sun.color + '; color:' + sun.text + ';';
+    }
+    var badge = '';
+    if (dow === 0) {
+      var n = countSundayWorkers(key);
+      var maxW = state.sundayRule.maxWorkers || 2;
+      badge = '<span class="sun-count ' + (n <= maxW ? 'ok' : 'bad') + '">' + n + '/' + maxW + '</span>';
+    }
+    var alertIcon = (miss.missing06 || miss.missing14) ? '<span style="color:var(--danger);font-size:11px;display:block;line-height:1;margin-top:2px;" title="Falta turno essencial">⚠</span>' : '';
+    h += '<div class="wk-day-head ' + cls + '" style="' + headStyle + '"><span class="wk-dow" style="' + (dow === 0 ? 'color:inherit;opacity:.9' : '') + '">' + DOW[dow] + '</span><span class="wk-num">' + d.getDate() + '</span>' + badge + alertIcon + '</div>';
+  }
+  for (var k = 0; k < state.employees.length; k++) {
+    var emp = state.employees[k];
+    h += '<div class="wk-emp">' + emp + '</div>';
+    for (var l = 0; l < days.length; l++) {
+      var d = days[l], key = keyOf(d);
+      var code = (state.schedule[key] || {})[emp] || '';
+      var s = getShift(code);
+      var style = '';
+      if (s) {
+        if (s.type === 'work') {
+          style = 'color:' + (isHoliday(key) ? '#fff' : s.text) + ';';
+        } else if (d.getDay() === 0) {
+          var sunColor = (state.colors.SUNDAY || { color: '#ef4444' }).color;
+          style = 'background:' + sunColor + ';color:#facc15;font-weight:900;';
+        } else {
+          style = 'background:' + s.color + ';color:' + s.text + ';';
+        }
+      }
+      // Texto que aparecerá na IMPRESSÃO: só D, F6 e T (domingo trabalhado)
+      var printTxt = '';
+      if (code === 'D' || code === 'F6') printTxt = code;
+      else if (d.getDay() === 0 && isWorkShift(code)) printTxt = 'T';
+
+      var w = code && getWarningsForCell(emp, key, code).length > 0;
+      var holidayClass = isHoliday(key) ? 'holiday' : '';
+      h += '<button class="wk-cell ' + holidayClass + ' ' + (w ? 'has-warning' : '') + '" data-emp="' + emp + '" data-date="' + key + '" data-print="' + printTxt + '" style="' + style + '">' + (s ? s.label : '') + '</button>';
+    }
+  }
+  h += '</div>';
+
+  var weekStart = getWeekStart(currentDate);
+  var anyPlanned = false;
+  var folgaIssues = [];
+  var folgaOkList = [];
+  state.employees.forEach(function (emp) {
+    var scale = getEmployeeScale(emp);
+    var req = requiredFolgas(scale);
+    var info = getWeekFolgas(emp, weekStart);
+    if (info.planned) anyPlanned = true;
+    if (req > 0 && info.planned) {
+      if (info.folgas + info.empty < req) folgaIssues.push({ emp: emp, folgas: info.folgas, req: req, scale: scale });
+      else if (info.folgas >= req) folgaOkList.push(emp + ': ' + info.folgas + '/' + req);
+    }
+  });
+  if (folgaIssues.length) {
+    h += '<div class="week-alerts"><div class="warn-card"><h3>⚠ Folgas da Semana (Seg–Dom)</h3><ul>' +
+      folgaIssues.map(function (w) { return '<li><strong>' + w.emp + '</strong>: ' + w.folgas + ' folga(s) — precisa ' + w.req + ' (escala ' + w.scale + ')</li>'; }).join('') +
+      '</ul></div></div>';
+  } else if (anyPlanned && folgaOkList.length) {
+    h += '<div class="week-alerts"><div class="warn-card ok"><h3>✓ Folgas em dia (Seg–Dom)</h3><div style="font-size:12.5px;color:#166534;line-height:1.7">' + folgaOkList.join(' · ') + '</div></div></div>';
+  }
+  viewWeek.innerHTML = h;
+}
 
   function renderMonth() {
     if (!state.employees || state.employees.length === 0) {
