@@ -140,7 +140,7 @@ main{
   background:var(--surface);
   border:1px solid var(--border);
   flex:1;
-  min-height:0;
+  min-height:70%;
 }
 .grid-table{
   border-collapse:separate;border-spacing:0;
