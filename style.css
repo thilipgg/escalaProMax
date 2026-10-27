@@ -99,7 +99,7 @@ main{
   display:flex;
   flex-direction:column;
   flex:1;
-  min-height:0;
+  min-height:70%;
   padding-bottom:clamp(24px, 2vw, 40px);
 }
 
