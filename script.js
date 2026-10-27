@@ -801,81 +801,85 @@ function renderWeek() {
 }
 
   function renderMonth() {
-    if (!state.employees || state.employees.length === 0) {
-      viewMonth.innerHTML = emptyStateHTML('Nenhum colaborador cadastrado. Adicione em <strong>Ajustes</strong>.');
-      return;
+  if (!state.employees || state.employees.length === 0) {
+    viewMonth.innerHTML = emptyStateHTML('Nenhum colaborador cadastrado. Adicione em <strong>Ajustes</strong>.');
+    return;
+  }
+  var y = currentDate.getFullYear(), m = currentDate.getMonth();
+  var n = daysInMonth(currentDate);
+  var todayStr = new Date().toDateString();
+  var h = '<div class="grid-scroll" id="gridScrollInner"><table class="grid-table"><thead><tr><th class="sticky-col">Equipe</th>';
+  for (var d = 1; d <= n; d++) {
+    var dt = new Date(y, m, d), dow = dt.getDay(), key = dateKey(y, m, d);
+    var miss = checkEssentialShifts(key);
+    var missClass = (miss.missing06 || miss.missing14) ? 'missing-essential' : '';
+    var cls = [dow === 0 || dow === 6 ? 'weekend' : '', isHoliday(key) ? 'holiday' : '', dt.toDateString() === todayStr ? 'today' : '', missClass].filter(Boolean).join(' ');
+    var headStyle = '';
+    if (dow === 0) {
+      var sun = state.colors.SUNDAY || { color: '#ef4444', text: '#ffffff' };
+      headStyle = 'background:' + sun.color + '; color:' + sun.text + ';';
     }
-    var y = currentDate.getFullYear(), m = currentDate.getMonth();
-    var n = daysInMonth(currentDate);
-    var todayStr = new Date().toDateString();
-    var h = '<div class="grid-scroll" id="gridScrollInner"><table class="grid-table"><thead><tr><th class="sticky-col">Equipe</th>';
-    for (var d = 1; d <= n; d++) {
-      var dt = new Date(y, m, d), dow = dt.getDay(), key = dateKey(y, m, d);
-      var miss = checkEssentialShifts(key);
-      var missClass = (miss.missing06 || miss.missing14) ? 'missing-essential' : '';
-      var cls = [dow === 0 || dow === 6 ? 'weekend' : '', isHoliday(key) ? 'holiday' : '', dt.toDateString() === todayStr ? 'today' : '', missClass].filter(Boolean).join(' ');
-      var headStyle = '';
-      if (dow === 0) {
-        var sun = state.colors.SUNDAY || { color: '#ef4444', text: '#ffffff' };
-        headStyle = 'background:' + sun.color + '; color:' + sun.text + ';';
-      }
-      var alertIcon = (miss.missing06 || miss.missing14) ? '<span style="color:var(--danger);font-size:11px;display:block;line-height:1;margin-top:2px;" title="Falta turno essencial">⚠</span>' : '';
-      h += '<th class="' + cls + '" style="' + headStyle + '"><span class="dnum">' + d + '</span><span class="dow" style="' + (dow === 0 ? 'color:inherit;opacity:.9' : '') + '">' + DOW[dow] + '</span>' + alertIcon + '</th>';
-    }
-    h += '</tr></thead><tbody>';
-    for (var i = 0; i < state.employees.length; i++) {
-      var emp = state.employees[i];
-      h += '<tr><th class="sticky-col">' + emp + '</th>';
-      for (var j = 1; j <= n; j++) {
-        var dt = new Date(y, m, j), key = dateKey(y, m, j), dow = dt.getDay();
-        var code = (state.schedule[key] || {})[emp] || '';
-        var s = getShift(code);
-        var cls = ['cell', dow === 0 || dow === 6 ? 'weekend' : '', isHoliday(key) ? 'holiday' : ''].filter(Boolean).join(' ');
-        var style = '';
-        if (s) {
-          if (s.type === 'work') {
-            style = 'color:' + (isHoliday(key) ? '#fff' : s.text) + ';';
-          } else if (dow === 0) {
-            // Domingo + folga: letra amarela sobre o vermelho do domingo
-            var sunColor = (state.colors.SUNDAY || { color: '#ef4444' }).color;
-            style = 'background:' + sunColor + ';color:#facc15;font-weight:900;';
-          } else {
-            style = 'background:' + s.color + ';color:' + s.text + ';';
-          }
+    var alertIcon = (miss.missing06 || miss.missing14) ? '<span style="color:var(--danger);font-size:11px;display:block;line-height:1;margin-top:2px;" title="Falta turno essencial">⚠</span>' : '';
+    h += '<th class="' + cls + '" style="' + headStyle + '"><span class="dnum">' + d + '</span><span class="dow" style="' + (dow === 0 ? 'color:inherit;opacity:.9' : '') + '">' + DOW[dow] + '</span>' + alertIcon + '</th>';
+  }
+  h += '</tr></thead><tbody>';
+  for (var i = 0; i < state.employees.length; i++) {
+    var emp = state.employees[i];
+    h += '<tr><th class="sticky-col">' + emp + '</th>';
+    for (var j = 1; j <= n; j++) {
+      var dt = new Date(y, m, j), key = dateKey(y, m, j), dow = dt.getDay();
+      var code = (state.schedule[key] || {})[emp] || '';
+      var s = getShift(code);
+      var cls = ['cell', dow === 0 || dow === 6 ? 'weekend' : '', isHoliday(key) ? 'holiday' : ''].filter(Boolean).join(' ');
+      var style = '';
+      if (s) {
+        if (s.type === 'work') {
+          style = 'color:' + (isHoliday(key) ? '#fff' : s.text) + ';';
+        } else if (dow === 0) {
+          var sunColor = (state.colors.SUNDAY || { color: '#ef4444' }).color;
+          style = 'background:' + sunColor + ';color:#facc15;font-weight:900;';
+        } else {
+          style = 'background:' + s.color + ';color:' + s.text + ';';
         }
-        var w = code && getWarningsForCell(emp, key, code).length > 0;
-        h += '<td class="' + cls + ' ' + (w ? 'has-warning' : '') + '" data-emp="' + emp + '" data-date="' + key + '" style="' + style + '">' + (s ? s.label : '') + '</td>';
       }
-      h += '</tr>';
-    }
-    h += '</tbody></table></div><div class="legend">';
-    Object.keys(state.shifts).forEach(function (id) {
-      var s = state.shifts[id];
-      if (s.type === 'event') h += '<div class="legend-item"><span class="legend-dot" style="background:' + s.color + ';color:' + s.text + '">' + s.label + '</span>' + s.name + '</div>';
-    });
-    h += '</div>';
+      // Texto que aparecerá na IMPRESSÃO: só D, F6 e T (domingo trabalhado)
+      var printTxt = '';
+      if (code === 'D' || code === 'F6') printTxt = code;
+      else if (dow === 0 && isWorkShift(code)) printTxt = 'T';
 
-    var monthWarnings = getWeekWarningsForMonth(y, m);
-    if (monthWarnings.length) {
-      h += '<div class="week-alerts"><div class="warn-card"><h3>⚠ Folgas Semanais (Seg–Dom)</h3><ul>' +
-        monthWarnings.map(function (w) { return '<li>' + w + '</li>'; }).join('') + '</ul></div></div>';
-    } else {
-      var hasAnyPlanned = false;
-      for (var dd = 1; dd <= n; dd++) {
-        var kk = dateKey(y, m, dd);
-        if (state.schedule[kk] && Object.keys(state.schedule[kk]).length) { hasAnyPlanned = true; break; }
-      }
-      if (hasAnyPlanned) {
-        h += '<div class="week-alerts"><div class="warn-card ok"><h3>✓ Folgas Semanais em dia (Seg–Dom)</h3><div style="font-size:12.5px;color:#166534;line-height:1.7">Todas as semanas do mês respeitam a escala configurada.</div></div></div>';
-      }
+      var w = code && getWarningsForCell(emp, key, code).length > 0;
+      h += '<td class="' + cls + ' ' + (w ? 'has-warning' : '') + '" data-emp="' + emp + '" data-date="' + key + '" data-print="' + printTxt + '" style="' + style + '">' + (s ? s.label : '') + '</td>';
     }
+    h += '</tr>';
+  }
+  h += '</tbody></table></div><div class="legend">';
+  Object.keys(state.shifts).forEach(function (id) {
+    var s = state.shifts[id];
+    if (s.type === 'event') h += '<div class="legend-item"><span class="legend-dot" style="background:' + s.color + ';color:' + s.text + '">' + s.label + '</span>' + s.name + '</div>';
+  });
+  h += '</div>';
 
-    viewMonth.innerHTML = h;
-    requestAnimationFrame(function () {
-      var th = document.querySelector('#gridScrollInner th.today');
-      var sc = document.getElementById('gridScrollInner');
-      if (th && sc) sc.scrollLeft = Math.max(0, th.offsetLeft - 80);
-    });
+  var monthWarnings = getWeekWarningsForMonth(y, m);
+  if (monthWarnings.length) {
+    h += '<div class="week-alerts"><div class="warn-card"><h3>⚠ Folgas Semanais (Seg–Dom)</h3><ul>' +
+      monthWarnings.map(function (w) { return '<li>' + w + '</li>'; }).join('') + '</ul></div></div>';
+  } else {
+    var hasAnyPlanned = false;
+    for (var dd = 1; dd <= n; dd++) {
+      var kk = dateKey(y, m, dd);
+      if (state.schedule[kk] && Object.keys(state.schedule[kk]).length) { hasAnyPlanned = true; break; }
+    }
+    if (hasAnyPlanned) {
+      h += '<div class="week-alerts"><div class="warn-card ok"><h3>✓ Folgas Semanais em dia (Seg–Dom)</h3><div style="font-size:12.5px;color:#166534;line-height:1.7">Todas as semanas do mês respeitam a escala configurada.</div></div></div>';
+    }
+  }
+
+  viewMonth.innerHTML = h;
+  requestAnimationFrame(function () {
+    var th = document.querySelector('#gridScrollInner th.today');
+    var sc = document.getElementById('gridScrollInner');
+    if (th && sc) sc.scrollLeft = Math.max(0, th.offsetLeft - 80);
+  });
   }
 
   function renderSummary() {
