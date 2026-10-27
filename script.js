@@ -16,14 +16,13 @@
   let currentTeam = null;
   let userTeams = [];
 
-  // Variáveis de sincronização
-  let _syncState = 'idle'; // 'idle' | 'pending' | 'saving' | 'synced' | 'error'
+  let _syncState = 'idle';
   let _lastSyncTime = null;
   let pendingSave = false;
   let _saving = false;
   let saveTimer = null;
   let realtimeChannel = null;
-  let state = {}; // O estado da escala em si
+  let state = {};
 
   const DOW = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
   const MONTHS = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
@@ -79,12 +78,11 @@
     try {
       const { data, error } = await sb.from('escala').select('data').eq('team_id', currentTeam.id).maybeSingle();
       if (error) throw error;
-
       if (data && data.data && Object.keys(data.data).length > 0) {
         state = migrateState(data.data);
       } else {
         state = getDefaultState();
-        await doSave(); // Cria a linha se não existir
+        await doSave();
       }
       _syncState = 'synced';
       _lastSyncTime = new Date();
@@ -112,7 +110,6 @@
     _saving = true;
     _syncState = 'saving';
     updateStorageStatus();
-
     try {
       const { error } = await sb.from('escala').upsert({
         team_id: currentTeam.id,
@@ -127,7 +124,7 @@
       _syncState = 'error';
       pendingSave = true;
       clearTimeout(saveTimer);
-      saveTimer = setTimeout(doSave, 5000); // Tenta de novo em 5s
+      saveTimer = setTimeout(doSave, 5000);
     } finally {
       _saving = false;
       updateStorageStatus();
@@ -140,7 +137,6 @@
     if (!el) return;
     var now = _lastSyncTime || new Date();
     var timeStr = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
-
     if (_syncState === 'pending') { el.textContent = '⟳ Alterações pendentes'; el.style.background = '#fef3c7'; el.style.color = '#92400e'; }
     else if (_syncState === 'saving') { el.textContent = '⟳ Sincronizando...'; el.style.background = '#fef3c7'; el.style.color = '#92400e'; }
     else if (_syncState === 'synced') { el.textContent = '✓ Nuvem · ' + timeStr; el.style.background = '#dcfce7'; el.style.color = '#166534'; }
@@ -149,14 +145,13 @@
   }
 
   // ==========================================
-  // 4. AUTENTICAÇÃO E TIMES (UI E LÓGICA)
+  // 4. AUTENTICAÇÃO E TIMES
   // ==========================================
   function updateHeaderUI() {
     const isApp = (currentUser && currentTeam);
     document.querySelector('.period-row').style.display = isApp ? 'flex' : 'none';
     document.querySelector('.tabs').style.display = isApp ? 'flex' : 'none';
     document.getElementById('printBtn').style.display = isApp ? 'grid' : 'none';
-
     if (currentTeam) {
       document.getElementById('teamNameDisplay').textContent = currentTeam.name;
       document.title = currentTeam.name + ' · Escala';
@@ -167,42 +162,30 @@
   }
 
   function renderAuthScreen() {
-    // ✅ FIX 1: garante que a view de semana esteja visível
     activeView = 'week';
-    document.querySelectorAll('.tab').forEach(t =>
-      t.classList.toggle('active', t.dataset.view === 'week')
-    );
-    document.querySelectorAll('.view').forEach(v =>
-      v.classList.toggle('active', v.id === 'view-week')
-    );
-
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.view === 'week'));
+    document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-week'));
     document.getElementById('view-week').innerHTML = `
     <div class="auth-wrap">
       <div class="auth-card">
         <h2 class="auth-title">Acessar Sistema</h2>
-
         <div class="auth-field">
           <label for="authEmail">E-mail</label>
           <input type="email" id="authEmail" autocomplete="email" inputmode="email" autocapitalize="none" spellcheck="false">
         </div>
-
         <div class="auth-field" id="nameField" style="display:none;">
           <label for="authName">Nome do Líder</label>
           <input type="text" id="authName" autocomplete="name">
         </div>
-
         <div class="auth-field">
           <label for="authPass">Senha</label>
           <input type="password" id="authPass" autocomplete="current-password">
         </div>
-
         <button type="button" id="btnLogin" class="btn-auto">Entrar</button>
         <button type="button" id="btnSignUp" class="add-btn">Criar nova conta</button>
-
         <div id="authError" class="auth-error"></div>
       </div>
-    </div>
-  `;
+    </div>`;
 
     let isRegistering = false;
     const nameField = document.getElementById('nameField');
@@ -229,35 +212,16 @@
       const email = emailInp.value.trim();
       const pass = passInp.value;
       const name = nameInp.value.trim();
-
-      if (!email || !pass) {
-        errorDiv.style.color = 'var(--danger)';
-        errorDiv.textContent = 'Preencha e-mail e senha.';
-        return;
-      }
-      if (isRegistering && !name) {
-        errorDiv.style.color = 'var(--danger)';
-        errorDiv.textContent = 'Preencha seu nome.';
-        return;
-      }
-
+      if (!email || !pass) { errorDiv.style.color = 'var(--danger)'; errorDiv.textContent = 'Preencha e-mail e senha.'; return; }
+      if (isRegistering && !name) { errorDiv.style.color = 'var(--danger)'; errorDiv.textContent = 'Preencha seu nome.'; return; }
       btnLogin.textContent = 'Aguarde...';
       btnLogin.disabled = true;
       errorDiv.textContent = '';
-
       try {
         if (isRegistering) {
-          console.log('[Auth] Tentando signUp:', email);
-          const { data, error } = await sb.auth.signUp({
-            email,
-            password: pass,
-            options: { data: { full_name: name } }
-          });
+          const { data, error } = await sb.auth.signUp({ email, password: pass, options: { data: { full_name: name } } });
           if (error) throw error;
-          console.log('[Auth] signUp resposta:', data);
-
           if (data.session === null) {
-            // Confirmação de e-mail pendente
             errorDiv.style.color = '#16a34a';
             errorDiv.textContent = 'Conta criada! Verifique seu e-mail para confirmar antes de entrar.';
             isRegistering = false;
@@ -268,7 +232,6 @@
           }
           toast('Conta criada com sucesso!');
         } else {
-          console.log('[Auth] Tentando login:', email);
           const { error } = await sb.auth.signInWithPassword({ email, password: pass });
           if (error) throw error;
         }
@@ -285,27 +248,18 @@
 
   async function fetchUserTeams() {
     const { data, error } = await sb.from('team_members').select('team_id, teams(id, name)').eq('user_id', currentUser.id);
-    if (error) {
-      console.error(error);
-      return [];
-    }
+    if (error) { console.error(error); return []; }
     return data.map(d => d.teams);
   }
 
   function renderTeamSelection() {
-
     activeView = 'week';
-    document.querySelectorAll('.tab').forEach(t =>
-      t.classList.toggle('active', t.dataset.view === 'week')
-    );
-    document.querySelectorAll('.view').forEach(v =>
-      v.classList.toggle('active', v.id === 'view-week')
-    );
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.view === 'week'));
+    document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-week'));
 
     let html = `<div style="max-width:600px;margin:40px auto;padding:20px;">
       <h2 style="text-align:center;margin-bottom:20px;">Selecione seu Time</h2>
       <div style="display:grid;gap:10px;margin-bottom:30px;">`;
-
     if (userTeams.length === 0) {
       html += `<p style="text-align:center;color:#64748b;">Você ainda não participa de nenhum time.</p>`;
     } else {
@@ -316,7 +270,6 @@
         </button>`;
       });
     }
-
     html += `</div>
       <div style="border-top:1px solid var(--border);padding-top:20px;text-align:center;">
         <h3>Criar novo time</h3>
@@ -329,7 +282,6 @@
         <button id="btnLogout" style="color:var(--danger);font-size:12px;">Sair da conta</button>
       </div>
     </div>`;
-
     document.getElementById('view-week').innerHTML = html;
 
     document.querySelectorAll('.team-btn').forEach(btn => {
@@ -339,41 +291,25 @@
       });
     });
 
-        document.getElementById('btnCreateTeam').addEventListener('click', async () => {
+    document.getElementById('btnCreateTeam').addEventListener('click', async () => {
       const name = document.getElementById('newTeamName').value.trim();
       if (!name) return;
-
       const btn = document.getElementById('btnCreateTeam');
       const originalText = btn.textContent;
-      
-      btn.textContent = 'Criando...'; 
+      btn.textContent = 'Criando...';
       btn.disabled = true;
-
       try {
-        // 1. Cria o time
-        const { data: team, error: err1 } = await sb
-          .from('teams')
-          .insert({ name, created_by: currentUser.id })
-          .select()
-          .single();
+        const { data: team, error: err1 } = await sb.from('teams').insert({ name, created_by: currentUser.id }).select().single();
         if (err1) throw err1;
-
-        // 2. Adiciona o criador como membro
-        const { error: err2 } = await sb
-          .from('team_members')
-          .insert({ team_id: team.id, user_id: currentUser.id, role: 'admin' });
+        const { error: err2 } = await sb.from('team_members').insert({ team_id: team.id, user_id: currentUser.id, role: 'admin' });
         if (err2) throw err2;
-
-        // 3. Cria a escala inicial
         await sb.from('escala').insert({ team_id: team.id, data: getDefaultState() });
-
         currentTeam = team;
         await startApp();
       } catch (e) {
         console.error('[Team Creation] Erro:', e);
         alert('Erro ao criar time: ' + e.message);
-        // ✅ SEMPRE restaura o botão, independente de erro ou sucesso
-        btn.textContent = originalText; 
+        btn.textContent = originalText;
         btn.disabled = false;
       }
     });
@@ -384,7 +320,6 @@
   function setupRealtime() {
     if (realtimeChannel) sb.removeChannel(realtimeChannel);
     if (!currentTeam) return;
-
     realtimeChannel = sb.channel('escala-' + currentTeam.id)
       .on('postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'escala', filter: 'team_id=eq.' + currentTeam.id },
@@ -408,16 +343,11 @@
     setupRealtime();
   }
 
-  // ==========================================
-  // 5. INICIALIZAÇÃO DA APLICAÇÃO
-  // ==========================================
   async function initApp() {
     sb.auth.onAuthStateChange(async (event, session) => {
       if (session) {
         currentUser = session.user;
         userTeams = await fetchUserTeams();
-
-        // Se o usuário só tem 1 time, entra direto
         if (userTeams.length === 1 && !currentTeam) {
           currentTeam = userTeams[0];
           await startApp();
@@ -435,7 +365,7 @@
   }
 
   // ==========================================
-  // 6. LÓGICA DO APP (CÓDIGO ORIGINAL ADAPTADO)
+  // 6. LÓGICA DO APP
   // ==========================================
   var currentDate = new Date();
   var activeView = 'week';
@@ -613,13 +543,11 @@
       return warnings;
     }
     if (!isWorkShift(code)) return warnings;
-
     var d = new Date(date + 'T00:00:00');
     var prev = new Date(d); prev.setDate(prev.getDate() - 1);
     var next = new Date(d); next.setDate(next.getDate() + 1);
     var prevCode = (state.schedule[keyOf(prev)] || {})[emp];
     var nextCode = (state.schedule[keyOf(next)] || {})[emp];
-
     if (isWorkShift(prevCode) && !isValidTransition(prevCode, code)) {
       warnings.push('Após ' + prevCode + ' no dia anterior, o próximo turno só pode começar a partir de ' + fmtMin(shiftNextMin(prevCode)) + '.');
     }
@@ -668,6 +596,13 @@
     return '<div class="empty-state"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg><div>' + msg + '</div></div>';
   }
 
+  // Helper: define o texto que aparecerá na IMPRESSÃO (D, F6, T ou vazio)
+  function computePrintText(code, dow) {
+    if (code === 'D' || code === 'F6') return code;
+    if (dow === 0 && isWorkShift(code)) return 'T';
+    return '';
+  }
+
   function renderWeek() {
     if (!state.employees || state.employees.length === 0) {
       viewWeek.innerHTML = emptyStateHTML('Nenhum colaborador cadastrado. Adicione em <strong>Ajustes</strong>.');
@@ -675,211 +610,160 @@
     }
     var start = getWeekStart(currentDate);
     var days = [];
-    for (var i = 0; i < 7; i++) { var d = new Date(start); d.setDate(start.getDate() + i); days.push(d); }
+    for (var i = 0; i < 7; i++) { var d0 = new Date(start); d0.setDate(start.getDate() + i); days.push(d0); }
     var todayStr = new Date().toDateString();
     var h = '<div class="week-grid"><div class="wk-corner"></div>';
     for (var j = 0; j < days.length; j++) {
-      var d = days[j], key = keyOf(d), dow = d.getDay();
-      var miss = checkEssentialShifts(key);
+      var dH = days[j], keyH = keyOf(dH), dowH = dH.getDay();
+      var miss = checkEssentialShifts(keyH);
       var missClass = (miss.missing06 || miss.missing14) ? 'missing-essential' : '';
-      var cls = [dow === 0 || dow === 6 ? 'weekend' : '', isHoliday(key) ? 'holiday' : '', d.toDateString() === todayStr ? 'today' : '', missClass].filter(Boolean).join(' ');
+      var clsH = [dowH === 0 || dowH === 6 ? 'weekend' : '', isHoliday(keyH) ? 'holiday' : '', dH.toDateString() === todayStr ? 'today' : '', missClass].filter(Boolean).join(' ');
       var headStyle = '';
-      if (dow === 0) {
+      if (dowH === 0) {
         var sun = state.colors.SUNDAY || { color: '#ef4444', text: '#ffffff' };
         headStyle = 'background:' + sun.color + '; color:' + sun.text + ';';
       }
       var badge = '';
-      if (dow === 0) {
-        var n = countSundayWorkers(key);
+      if (dowH === 0) {
+        var nW = countSundayWorkers(keyH);
         var maxW = state.sundayRule.maxWorkers || 2;
-        badge = '<span class="sun-count ' + (n <= maxW ? 'ok' : 'bad') + '">' + n + '/' + maxW + '</span>';
+        badge = '<span class="sun-count ' + (nW <= maxW ? 'ok' : 'bad') + '">' + nW + '/' + maxW + '</span>';
       }
       var alertIcon = (miss.missing06 || miss.missing14) ? '<span style="color:var(--danger);font-size:11px;display:block;line-height:1;margin-top:2px;" title="Falta turno essencial">⚠</span>' : '';
-      h += '<div class="wk-day-head ' + cls + '" style="' + headStyle + '"><span class="wk-dow" style="' + (dow === 0 ? 'color:inherit;opacity:.9' : '') + '">' + DOW[dow] + '</span><span class="wk-num">' + d.getDate() + '</span>' + badge + alertIcon + '</div>';
+      h += '<div class="wk-day-head ' + clsH + '" style="' + headStyle + '"><span class="wk-dow" style="' + (dowH === 0 ? 'color:inherit;opacity:.9' : '') + '">' + DOW[dowH] + '</span><span class="wk-num">' + dH.getDate() + '</span>' + badge + alertIcon + '</div>';
     }
     for (var k = 0; k < state.employees.length; k++) {
       var emp = state.employees[k];
       h += '<div class="wk-emp">' + emp + '</div>';
       for (var l = 0; l < days.length; l++) {
-        var d = days[l], key = keyOf(d);
+        var d = days[l], key = keyOf(d), dow = d.getDay();
         var code = (state.schedule[key] || {})[emp] || '';
         var s = getShift(code);
         var style = '';
         if (s) {
           if (s.type === 'work') {
             style = 'color:' + (isHoliday(key) ? '#fff' : s.text) + ';';
-          } else if (d.getDay() === 0) {
-            // Domingo + folga: letra amarela sobre o vermelho do domingo
+          } else if (dow === 0) {
             var sunColor = (state.colors.SUNDAY || { color: '#ef4444' }).color;
             style = 'background:' + sunColor + ';color:#facc15;font-weight:900;';
           } else {
             style = 'background:' + s.color + ';color:' + s.text + ';';
           }
         }
+        var printTxt = computePrintText(code, dow);
+        var inner = '';
+        if (s) inner += '<span class="cell-txt">' + s.label + '</span>';
+        if (printTxt) inner += '<span class="cell-print">' + printTxt + '</span>';
         var w = code && getWarningsForCell(emp, key, code).length > 0;
-function renderWeek() {
-  if (!state.employees || state.employees.length === 0) {
-    viewWeek.innerHTML = emptyStateHTML('Nenhum colaborador cadastrado. Adicione em <strong>Ajustes</strong>.');
-    return;
-  }
-  var start = getWeekStart(currentDate);
-  var days = [];
-  for (var i = 0; i < 7; i++) { var d = new Date(start); d.setDate(start.getDate() + i); days.push(d); }
-  var todayStr = new Date().toDateString();
-  var h = '<div class="week-grid"><div class="wk-corner"></div>';
-  for (var j = 0; j < days.length; j++) {
-    var d = days[j], key = keyOf(d), dow = d.getDay();
-    var miss = checkEssentialShifts(key);
-    var missClass = (miss.missing06 || miss.missing14) ? 'missing-essential' : '';
-    var cls = [dow === 0 || dow === 6 ? 'weekend' : '', isHoliday(key) ? 'holiday' : '', d.toDateString() === todayStr ? 'today' : '', missClass].filter(Boolean).join(' ');
-    var headStyle = '';
-    if (dow === 0) {
-      var sun = state.colors.SUNDAY || { color: '#ef4444', text: '#ffffff' };
-      headStyle = 'background:' + sun.color + '; color:' + sun.text + ';';
-    }
-    var badge = '';
-    if (dow === 0) {
-      var n = countSundayWorkers(key);
-      var maxW = state.sundayRule.maxWorkers || 2;
-      badge = '<span class="sun-count ' + (n <= maxW ? 'ok' : 'bad') + '">' + n + '/' + maxW + '</span>';
-    }
-    var alertIcon = (miss.missing06 || miss.missing14) ? '<span style="color:var(--danger);font-size:11px;display:block;line-height:1;margin-top:2px;" title="Falta turno essencial">⚠</span>' : '';
-    h += '<div class="wk-day-head ' + cls + '" style="' + headStyle + '"><span class="wk-dow" style="' + (dow === 0 ? 'color:inherit;opacity:.9' : '') + '">' + DOW[dow] + '</span><span class="wk-num">' + d.getDate() + '</span>' + badge + alertIcon + '</div>';
-  }
-  for (var k = 0; k < state.employees.length; k++) {
-    var emp = state.employees[k];
-    h += '<div class="wk-emp">' + emp + '</div>';
-    for (var l = 0; l < days.length; l++) {
-      var d = days[l], key = keyOf(d);
-      var code = (state.schedule[key] || {})[emp] || '';
-      var s = getShift(code);
-      var style = '';
-      if (s) {
-        if (s.type === 'work') {
-          style = 'color:' + (isHoliday(key) ? '#fff' : s.text) + ';';
-        } else if (d.getDay() === 0) {
-          var sunColor = (state.colors.SUNDAY || { color: '#ef4444' }).color;
-          style = 'background:' + sunColor + ';color:#facc15;font-weight:900;';
-        } else {
-          style = 'background:' + s.color + ';color:' + s.text + ';';
-        }
+        var holidayClass = isHoliday(key) ? 'holiday' : '';
+        h += '<button class="wk-cell ' + holidayClass + ' ' + (w ? 'has-warning' : '') + '" data-emp="' + emp + '" data-date="' + key + '" data-print="' + printTxt + '" style="' + style + '">' + inner + '</button>';
       }
-      // Texto que aparecerá na IMPRESSÃO: só D, F6 e T (domingo trabalhado)
-      var printTxt = '';
-      if (code === 'D' || code === 'F6') printTxt = code;
-      else if (d.getDay() === 0 && isWorkShift(code)) printTxt = 'T';
-
-      var w = code && getWarningsForCell(emp, key, code).length > 0;
-      var holidayClass = isHoliday(key) ? 'holiday' : '';
-      h += '<button class="wk-cell ' + holidayClass + ' ' + (w ? 'has-warning' : '') + '" data-emp="' + emp + '" data-date="' + key + '" data-print="' + printTxt + '" style="' + style + '">' + (s ? s.label : '') + '</button>';
     }
-  }
-  h += '</div>';
+    h += '</div>';
 
-  var weekStart = getWeekStart(currentDate);
-  var anyPlanned = false;
-  var folgaIssues = [];
-  var folgaOkList = [];
-  state.employees.forEach(function (emp) {
-    var scale = getEmployeeScale(emp);
-    var req = requiredFolgas(scale);
-    var info = getWeekFolgas(emp, weekStart);
-    if (info.planned) anyPlanned = true;
-    if (req > 0 && info.planned) {
-      if (info.folgas + info.empty < req) folgaIssues.push({ emp: emp, folgas: info.folgas, req: req, scale: scale });
-      else if (info.folgas >= req) folgaOkList.push(emp + ': ' + info.folgas + '/' + req);
+    var weekStart = getWeekStart(currentDate);
+    var anyPlanned = false;
+    var folgaIssues = [];
+    var folgaOkList = [];
+    state.employees.forEach(function (emp) {
+      var scale = getEmployeeScale(emp);
+      var req = requiredFolgas(scale);
+      var info = getWeekFolgas(emp, weekStart);
+      if (info.planned) anyPlanned = true;
+      if (req > 0 && info.planned) {
+        if (info.folgas + info.empty < req) folgaIssues.push({ emp: emp, folgas: info.folgas, req: req, scale: scale });
+        else if (info.folgas >= req) folgaOkList.push(emp + ': ' + info.folgas + '/' + req);
+      }
+    });
+    if (folgaIssues.length) {
+      h += '<div class="week-alerts"><div class="warn-card"><h3>⚠ Folgas da Semana (Seg–Dom)</h3><ul>' +
+        folgaIssues.map(function (w) { return '<li><strong>' + w.emp + '</strong>: ' + w.folgas + ' folga(s) — precisa ' + w.req + ' (escala ' + w.scale + ')</li>'; }).join('') +
+        '</ul></div></div>';
+    } else if (anyPlanned && folgaOkList.length) {
+      h += '<div class="week-alerts"><div class="warn-card ok"><h3>✓ Folgas em dia (Seg–Dom)</h3><div style="font-size:12.5px;color:#166534;line-height:1.7">' + folgaOkList.join(' · ') + '</div></div></div>';
     }
-  });
-  if (folgaIssues.length) {
-    h += '<div class="week-alerts"><div class="warn-card"><h3>⚠ Folgas da Semana (Seg–Dom)</h3><ul>' +
-      folgaIssues.map(function (w) { return '<li><strong>' + w.emp + '</strong>: ' + w.folgas + ' folga(s) — precisa ' + w.req + ' (escala ' + w.scale + ')</li>'; }).join('') +
-      '</ul></div></div>';
-  } else if (anyPlanned && folgaOkList.length) {
-    h += '<div class="week-alerts"><div class="warn-card ok"><h3>✓ Folgas em dia (Seg–Dom)</h3><div style="font-size:12.5px;color:#166534;line-height:1.7">' + folgaOkList.join(' · ') + '</div></div></div>';
+    viewWeek.innerHTML = h;
   }
-  viewWeek.innerHTML = h;
-}
 
   function renderMonth() {
-  if (!state.employees || state.employees.length === 0) {
-    viewMonth.innerHTML = emptyStateHTML('Nenhum colaborador cadastrado. Adicione em <strong>Ajustes</strong>.');
-    return;
-  }
-  var y = currentDate.getFullYear(), m = currentDate.getMonth();
-  var n = daysInMonth(currentDate);
-  var todayStr = new Date().toDateString();
-  var h = '<div class="grid-scroll" id="gridScrollInner"><table class="grid-table"><thead><tr><th class="sticky-col">Equipe</th>';
-  for (var d = 1; d <= n; d++) {
-    var dt = new Date(y, m, d), dow = dt.getDay(), key = dateKey(y, m, d);
-    var miss = checkEssentialShifts(key);
-    var missClass = (miss.missing06 || miss.missing14) ? 'missing-essential' : '';
-    var cls = [dow === 0 || dow === 6 ? 'weekend' : '', isHoliday(key) ? 'holiday' : '', dt.toDateString() === todayStr ? 'today' : '', missClass].filter(Boolean).join(' ');
-    var headStyle = '';
-    if (dow === 0) {
-      var sun = state.colors.SUNDAY || { color: '#ef4444', text: '#ffffff' };
-      headStyle = 'background:' + sun.color + '; color:' + sun.text + ';';
+    if (!state.employees || state.employees.length === 0) {
+      viewMonth.innerHTML = emptyStateHTML('Nenhum colaborador cadastrado. Adicione em <strong>Ajustes</strong>.');
+      return;
     }
-    var alertIcon = (miss.missing06 || miss.missing14) ? '<span style="color:var(--danger);font-size:11px;display:block;line-height:1;margin-top:2px;" title="Falta turno essencial">⚠</span>' : '';
-    h += '<th class="' + cls + '" style="' + headStyle + '"><span class="dnum">' + d + '</span><span class="dow" style="' + (dow === 0 ? 'color:inherit;opacity:.9' : '') + '">' + DOW[dow] + '</span>' + alertIcon + '</th>';
-  }
-  h += '</tr></thead><tbody>';
-  for (var i = 0; i < state.employees.length; i++) {
-    var emp = state.employees[i];
-    h += '<tr><th class="sticky-col">' + emp + '</th>';
-    for (var j = 1; j <= n; j++) {
-      var dt = new Date(y, m, j), key = dateKey(y, m, j), dow = dt.getDay();
-      var code = (state.schedule[key] || {})[emp] || '';
-      var s = getShift(code);
-      var cls = ['cell', dow === 0 || dow === 6 ? 'weekend' : '', isHoliday(key) ? 'holiday' : ''].filter(Boolean).join(' ');
-      var style = '';
-      if (s) {
-        if (s.type === 'work') {
-          style = 'color:' + (isHoliday(key) ? '#fff' : s.text) + ';';
-        } else if (dow === 0) {
-          var sunColor = (state.colors.SUNDAY || { color: '#ef4444' }).color;
-          style = 'background:' + sunColor + ';color:#facc15;font-weight:900;';
-        } else {
-          style = 'background:' + s.color + ';color:' + s.text + ';';
-        }
+    var y = currentDate.getFullYear(), m = currentDate.getMonth();
+    var n = daysInMonth(currentDate);
+    var todayStr = new Date().toDateString();
+    var h = '<div class="grid-scroll" id="gridScrollInner"><table class="grid-table"><thead><tr><th class="sticky-col">Equipe</th>';
+    for (var d = 1; d <= n; d++) {
+      var dtH = new Date(y, m, d), dowH = dtH.getDay(), keyH = dateKey(y, m, d);
+      var miss = checkEssentialShifts(keyH);
+      var missClass = (miss.missing06 || miss.missing14) ? 'missing-essential' : '';
+      var clsH = [dowH === 0 || dowH === 6 ? 'weekend' : '', isHoliday(keyH) ? 'holiday' : '', dtH.toDateString() === todayStr ? 'today' : '', missClass].filter(Boolean).join(' ');
+      var headStyle = '';
+      if (dowH === 0) {
+        var sun = state.colors.SUNDAY || { color: '#ef4444', text: '#ffffff' };
+        headStyle = 'background:' + sun.color + '; color:' + sun.text + ';';
       }
-      // Texto que aparecerá na IMPRESSÃO: só D, F6 e T (domingo trabalhado)
-      var printTxt = '';
-      if (code === 'D' || code === 'F6') printTxt = code;
-      else if (dow === 0 && isWorkShift(code)) printTxt = 'T';
-
-      var w = code && getWarningsForCell(emp, key, code).length > 0;
-      h += '<td class="' + cls + ' ' + (w ? 'has-warning' : '') + '" data-emp="' + emp + '" data-date="' + key + '" data-print="' + printTxt + '" style="' + style + '">' + (s ? s.label : '') + '</td>';
+      var alertIcon = (miss.missing06 || miss.missing14) ? '<span style="color:var(--danger);font-size:11px;display:block;line-height:1;margin-top:2px;" title="Falta turno essencial">⚠</span>' : '';
+      h += '<th class="' + clsH + '" style="' + headStyle + '"><span class="dnum">' + d + '</span><span class="dow" style="' + (dowH === 0 ? 'color:inherit;opacity:.9' : '') + '">' + DOW[dowH] + '</span>' + alertIcon + '</th>';
     }
-    h += '</tr>';
-  }
-  h += '</tbody></table></div><div class="legend">';
-  Object.keys(state.shifts).forEach(function (id) {
-    var s = state.shifts[id];
-    if (s.type === 'event') h += '<div class="legend-item"><span class="legend-dot" style="background:' + s.color + ';color:' + s.text + '">' + s.label + '</span>' + s.name + '</div>';
-  });
-  h += '</div>';
-
-  var monthWarnings = getWeekWarningsForMonth(y, m);
-  if (monthWarnings.length) {
-    h += '<div class="week-alerts"><div class="warn-card"><h3>⚠ Folgas Semanais (Seg–Dom)</h3><ul>' +
-      monthWarnings.map(function (w) { return '<li>' + w + '</li>'; }).join('') + '</ul></div></div>';
-  } else {
-    var hasAnyPlanned = false;
-    for (var dd = 1; dd <= n; dd++) {
-      var kk = dateKey(y, m, dd);
-      if (state.schedule[kk] && Object.keys(state.schedule[kk]).length) { hasAnyPlanned = true; break; }
+    h += '</tr></thead><tbody>';
+    for (var i = 0; i < state.employees.length; i++) {
+      var emp = state.employees[i];
+      h += '<tr><th class="sticky-col">' + emp + '</th>';
+      for (var j = 1; j <= n; j++) {
+        var dt = new Date(y, m, j), key = dateKey(y, m, j), dow = dt.getDay();
+        var code = (state.schedule[key] || {})[emp] || '';
+        var s = getShift(code);
+        var cls = ['cell', dow === 0 || dow === 6 ? 'weekend' : '', isHoliday(key) ? 'holiday' : ''].filter(Boolean).join(' ');
+        var style = '';
+        if (s) {
+          if (s.type === 'work') {
+            style = 'color:' + (isHoliday(key) ? '#fff' : s.text) + ';';
+          } else if (dow === 0) {
+            var sunColor = (state.colors.SUNDAY || { color: '#ef4444' }).color;
+            style = 'background:' + sunColor + ';color:#facc15;font-weight:900;';
+          } else {
+            style = 'background:' + s.color + ';color:' + s.text + ';';
+          }
+        }
+        var printTxt = computePrintText(code, dow);
+        var inner = '';
+        if (s) inner += '<span class="cell-txt">' + s.label + '</span>';
+        if (printTxt) inner += '<span class="cell-print">' + printTxt + '</span>';
+        var w = code && getWarningsForCell(emp, key, code).length > 0;
+        h += '<td class="' + cls + ' ' + (w ? 'has-warning' : '') + '" data-emp="' + emp + '" data-date="' + key + '" data-print="' + printTxt + '" style="' + style + '">' + inner + '</td>';
+      }
+      h += '</tr>';
     }
-    if (hasAnyPlanned) {
-      h += '<div class="week-alerts"><div class="warn-card ok"><h3>✓ Folgas Semanais em dia (Seg–Dom)</h3><div style="font-size:12.5px;color:#166534;line-height:1.7">Todas as semanas do mês respeitam a escala configurada.</div></div></div>';
-    }
-  }
+    h += '</tbody></table></div><div class="legend">';
+    Object.keys(state.shifts).forEach(function (id) {
+      var s = state.shifts[id];
+      if (s.type === 'event') h += '<div class="legend-item"><span class="legend-dot" style="background:' + s.color + ';color:' + s.text + '">' + s.label + '</span>' + s.name + '</div>';
+    });
+    h += '</div>';
 
-  viewMonth.innerHTML = h;
-  requestAnimationFrame(function () {
-    var th = document.querySelector('#gridScrollInner th.today');
-    var sc = document.getElementById('gridScrollInner');
-    if (th && sc) sc.scrollLeft = Math.max(0, th.offsetLeft - 80);
-  });
+    var monthWarnings = getWeekWarningsForMonth(y, m);
+    if (monthWarnings.length) {
+      h += '<div class="week-alerts"><div class="warn-card"><h3>⚠ Folgas Semanais (Seg–Dom)</h3><ul>' +
+        monthWarnings.map(function (w) { return '<li>' + w + '</li>'; }).join('') + '</ul></div></div>';
+    } else {
+      var hasAnyPlanned = false;
+      for (var dd = 1; dd <= n; dd++) {
+        var kk = dateKey(y, m, dd);
+        if (state.schedule[kk] && Object.keys(state.schedule[kk]).length) { hasAnyPlanned = true; break; }
+      }
+      if (hasAnyPlanned) {
+        h += '<div class="week-alerts"><div class="warn-card ok"><h3>✓ Folgas Semanais em dia (Seg–Dom)</h3><div style="font-size:12.5px;color:#166534;line-height:1.7">Todas as semanas do mês respeitam a escala configurada.</div></div></div>';
+      }
+    }
+
+    viewMonth.innerHTML = h;
+    requestAnimationFrame(function () {
+      var th = document.querySelector('#gridScrollInner th.today');
+      var sc = document.getElementById('gridScrollInner');
+      if (th && sc) sc.scrollLeft = Math.max(0, th.offsetLeft - 80);
+    });
   }
 
   function renderSummary() {
@@ -952,11 +836,11 @@ function renderWeek() {
       if (miss.missing14) warningList.push('Dia ' + pad(d) + '/' + pad(m + 1) + ': Ninguém escalado no horário essencial das 14:00.');
     }
     state.employees.forEach(function (emp) {
-      for (var d = 1; d < n; d++) {
-        var k1 = dateKey(y, m, d), k2 = dateKey(y, m, d + 1);
+      for (var d2 = 1; d2 < n; d2++) {
+        var k1 = dateKey(y, m, d2), k2 = dateKey(y, m, d2 + 1);
         var c1 = (state.schedule[k1] || {})[emp], c2 = (state.schedule[k2] || {})[emp];
         if (isWorkShift(c1) && isWorkShift(c2) && !isValidTransition(c1, c2)) {
-          warningList.push(emp + ': ' + pad(d) + '/' + pad(m + 1) + ' ' + c1 + ' → ' + pad(d + 1) + '/' + pad(m + 1) + ' ' + c2 + ' — descanso insuficiente (mín. 11h).');
+          warningList.push(emp + ': ' + pad(d2) + '/' + pad(m + 1) + ' ' + c1 + ' → ' + pad(d2 + 1) + '/' + pad(m + 1) + ' ' + c2 + ' — descanso insuficiente (mín. 11h).');
         }
       }
     });
@@ -973,99 +857,97 @@ function renderWeek() {
   }
 
   function renderSettings() {
-  var h = '';
-  // === NOVA ÁREA DE CONTA ===
-  h += `<div class="settings-section full" style="background:linear-gradient(135deg,#f8fafc,#f1f5f9);border-color:#e2e8f0">
-    <div class="section-head">
-      <div class="section-icon" style="background:#e2e8f0;color:#475569"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
-      <h3 class="section-title">Conta e Equipe</h3>
-    </div>
-    <div class="settings-row"><label>Líder logado</label><span style="font-weight:600;font-size:13px;">${currentUser.email}</span></div>
-    <div class="settings-row"><label>Time atual</label><span style="font-weight:600;font-size:13px;">${currentTeam.name}</span></div>
-    <div style="display:flex;gap:10px;margin-top:15px;">
-      <button class="danger-btn neutral" style="flex:1;" onclick="window.changeTeam()">Trocar de Time</button>
-      <button class="danger-btn" style="flex:1;" onclick="window.doLogout()">Sair da Conta</button>
-    </div>
-  </div>`;
+    var h = '';
+    h += `<div class="settings-section full" style="background:linear-gradient(135deg,#f8fafc,#f1f5f9);border-color:#e2e8f0">
+      <div class="section-head">
+        <div class="section-icon" style="background:#e2e8f0;color:#475569"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+        <h3 class="section-title">Conta e Equipe</h3>
+      </div>
+      <div class="settings-row"><label>Líder logado</label><span style="font-weight:600;font-size:13px;">${currentUser.email}</span></div>
+      <div class="settings-row"><label>Time atual</label><span style="font-weight:600;font-size:13px;">${currentTeam.name}</span></div>
+      <div style="display:flex;gap:10px;margin-top:15px;">
+        <button class="danger-btn neutral" style="flex:1;" onclick="window.changeTeam()">Trocar de Time</button>
+        <button class="danger-btn" style="flex:1;" onclick="window.doLogout()">Sair da Conta</button>
+      </div>
+    </div>`;
 
-  h += '<div class="settings-section full">' +
-    '<div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></div><h3 class="section-title">Geral</h3></div>' +
-    '<div class="settings-row"><label>Nome do time</label><input type="text" class="team-name-input" id="teamNameInput" value="' + state.teamName.replace(/"/g, '&quot;') + '" style="max-width:280px;flex:1"></div>' +
-    '<div class="settings-row"><label>Sincronização</label><span id="storageStatus" style="font-size:12px;font-weight:700;padding:6px 12px;border-radius:20px;background:#f1f5f9;color:#475569">—</span></div>' +
-    '<div class="settings-row"><label>Forçar envio à nuvem</label><button class="danger-btn neutral" id="forceSyncBtn">Sincronizar agora</button></div></div>';
+    h += '<div class="settings-section full">' +
+      '<div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></div><h3 class="section-title">Geral</h3></div>' +
+      '<div class="settings-row"><label>Nome do time</label><input type="text" class="team-name-input" id="teamNameInput" value="' + state.teamName.replace(/"/g, '&quot;') + '" style="max-width:280px;flex:1"></div>' +
+      '<div class="settings-row"><label>Sincronização</label><span id="storageStatus" style="font-size:12px;font-weight:700;padding:6px 12px;border-radius:20px;background:#f1f5f9;color:#475569">—</span></div>' +
+      '<div class="settings-row"><label>Forçar envio à nuvem</label><button class="danger-btn neutral" id="forceSyncBtn">Sincronizar agora</button></div></div>';
 
-  h += '<div class="settings-section"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div><h3 class="section-title">Colaboradores</h3></div><div class="edit-list" id="employeeList">';
-  state.employees.forEach(function (emp) {
-    h += '<div class="edit-row" data-emp="' + emp.replace(/"/g, '&quot;') + '"><input type="text" class="name-input emp-name" value="' + emp.replace(/"/g, '&quot;') + '" placeholder="Nome"><button class="row-delete" data-del-emp="' + emp.replace(/"/g, '&quot;') + '" title="Remover"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div>';
-  });
-  h += '</div><button class="add-btn" id="addEmployeeBtn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5v14"/></svg> Adicionar colaborador</button></div>';
+    h += '<div class="settings-section"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div><h3 class="section-title">Colaboradores</h3></div><div class="edit-list" id="employeeList">';
+    state.employees.forEach(function (emp) {
+      h += '<div class="edit-row" data-emp="' + emp.replace(/"/g, '&quot;') + '"><input type="text" class="name-input emp-name" value="' + emp.replace(/"/g, '&quot;') + '" placeholder="Nome"><button class="row-delete" data-del-emp="' + emp.replace(/"/g, '&quot;') + '" title="Remover"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div>';
+    });
+    h += '</div><button class="add-btn" id="addEmployeeBtn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5v14"/></svg> Adicionar colaborador</button></div>';
 
-  var workIds = Object.keys(state.shifts).filter(function (k) { return state.shifts[k].type === 'work'; });
-  workIds.sort(function (a, b) { return parseTime(state.shifts[a].start) - parseTime(state.shifts[b].start); });
+    var workIds = Object.keys(state.shifts).filter(function (k) { return state.shifts[k].type === 'work'; });
+    workIds.sort(function (a, b) { return parseTime(state.shifts[a].start) - parseTime(state.shifts[b].start); });
 
-  h += '<div class="settings-section"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><h3 class="section-title">Turnos de Trabalho</h3></div><div class="edit-list" id="workShiftList">';
-  workIds.forEach(function (id) {
-    var s = state.shifts[id];
-    h += '<div class="edit-row" data-shift="' + id + '" data-type="work"><input type="color" class="color-picker shift-color" value="' + s.color + '" title="Cor"><input type="text" class="label-input shift-label" value="' + s.label.replace(/"/g, '&quot;') + '" maxlength="4" title="Rótulo"><input type="time" class="time-input shift-start" value="' + s.start + '" title="Início"><span class="arrow">→</span><input type="time" class="time-input shift-end" value="' + s.end + '" title="Fim"><button class="row-delete" data-del-shift="' + id + '" title="Remover"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div>';
-  });
-  h += '</div><button class="add-btn" id="addWorkShiftBtn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5v14"/></svg> Adicionar turno</button></div>';
+    h += '<div class="settings-section"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><h3 class="section-title">Turnos de Trabalho</h3></div><div class="edit-list" id="workShiftList">';
+    workIds.forEach(function (id) {
+      var s = state.shifts[id];
+      h += '<div class="edit-row" data-shift="' + id + '" data-type="work"><input type="color" class="color-picker shift-color" value="' + s.color + '" title="Cor"><input type="text" class="label-input shift-label" value="' + s.label.replace(/"/g, '&quot;') + '" maxlength="4" title="Rótulo"><input type="time" class="time-input shift-start" value="' + s.start + '" title="Início"><span class="arrow">→</span><input type="time" class="time-input shift-end" value="' + s.end + '" title="Fim"><button class="row-delete" data-del-shift="' + id + '" title="Remover"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div>';
+    });
+    h += '</div><button class="add-btn" id="addWorkShiftBtn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5v14"/></svg> Adicionar turno</button></div>';
 
-  var eventIds = Object.keys(state.shifts).filter(function (k) { return state.shifts[k].type === 'event'; });
-  h += '<div class="settings-section"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82Z"/><line x1="7" x2="7.01" y1="7" y2="7"/></svg></div><h3 class="section-title">Eventos e Folgas</h3></div><div class="edit-list" id="eventShiftList">';
-  eventIds.forEach(function (id) {
-    var s = state.shifts[id];
-    h += '<div class="edit-row" data-shift="' + id + '" data-type="event"><input type="color" class="color-picker shift-color" value="' + s.color + '" title="Cor"><input type="text" class="label-input shift-label" value="' + s.label.replace(/"/g, '&quot;') + '" maxlength="4" title="Rótulo"><input type="text" class="name-input shift-name-input" value="' + s.name.replace(/"/g, '&quot;') + '" placeholder="Nome do evento" title="Nome"><button class="row-delete" data-del-shift="' + id + '" title="Remover"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div>';
-  });
-  h += '</div><button class="add-btn" id="addEventBtn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5v14"/></svg> Adicionar evento</button></div>';
+    var eventIds = Object.keys(state.shifts).filter(function (k) { return state.shifts[k].type === 'event'; });
+    h += '<div class="settings-section"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82Z"/><line x1="7" x2="7.01" y1="7" y2="7"/></svg></div><h3 class="section-title">Eventos e Folgas</h3></div><div class="edit-list" id="eventShiftList">';
+    eventIds.forEach(function (id) {
+      var s = state.shifts[id];
+      h += '<div class="edit-row" data-shift="' + id + '" data-type="event"><input type="color" class="color-picker shift-color" value="' + s.color + '" title="Cor"><input type="text" class="label-input shift-label" value="' + s.label.replace(/"/g, '&quot;') + '" maxlength="4" title="Rótulo"><input type="text" class="name-input shift-name-input" value="' + s.name.replace(/"/g, '&quot;') + '" placeholder="Nome do evento" title="Nome"><button class="row-delete" data-del-shift="' + id + '" title="Remover"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div>';
+    });
+    h += '</div><button class="add-btn" id="addEventBtn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5v14"/></svg> Adicionar evento</button></div>';
 
-  h += '<div class="settings-section full" style="background:linear-gradient(135deg,#eff6ff,#f8fafc);border-color:#bfdbfe"><div class="section-head"><div class="section-icon" style="background:#dbeafe;color:#1e40af"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div><h3 class="section-title" style="color:#1e3a8a">Automação</h3></div><p style="font-size:12.5px;color:#64748b;margin:-4px 0 12px">Preenche o mês com os horários padrão (Seg a Sáb). Domingos e folgas ficam em branco.</p><div class="sub-section-title">Turno padrão por colaborador</div>';
-  state.employees.forEach(function (emp) {
-    var cur = state.defaultShift[emp] || '';
-    var opts = workIds.map(function (id) { return '<option value="' + id + '" ' + (id === cur ? 'selected' : '') + '>' + state.shifts[id].name + '</option>'; }).join('');
-    h += '<div class="settings-row"><label>' + emp + '</label><select class="def-shift" data-emp="' + emp.replace(/"/g, '&quot;') + '">' + opts + '</select></div>';
-  });
-  h += '<button class="btn-auto" id="btnAuto" style="margin-top:14px"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Gerar Escala do Mês</button></div>';
+    h += '<div class="settings-section full" style="background:linear-gradient(135deg,#eff6ff,#f8fafc);border-color:#bfdbfe"><div class="section-head"><div class="section-icon" style="background:#dbeafe;color:#1e40af"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div><h3 class="section-title" style="color:#1e3a8a">Automação</h3></div><p style="font-size:12.5px;color:#64748b;margin:-4px 0 12px">Preenche o mês com os horários padrão (Seg a Sáb). Domingos e folgas ficam em branco.</p><div class="sub-section-title">Turno padrão por colaborador</div>';
+    state.employees.forEach(function (emp) {
+      var cur = state.defaultShift[emp] || '';
+      var opts = workIds.map(function (id) { return '<option value="' + id + '" ' + (id === cur ? 'selected' : '') + '>' + state.shifts[id].name + '</option>'; }).join('');
+      h += '<div class="settings-row"><label>' + emp + '</label><select class="def-shift" data-emp="' + emp.replace(/"/g, '&quot;') + '">' + opts + '</select></div>';
+    });
+    h += '<button class="btn-auto" id="btnAuto" style="margin-top:14px"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Gerar Escala do Mês</button></div>';
 
-  var rule = state.sundayRule;
-  h += '<div class="settings-section full"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg></div><h3 class="section-title">Regras de Escala</h3></div>' +
-    '<div class="settings-row"><label>Máximo de colaboradores no domingo</label><select class="sun-rule-config" data-key="maxWorkers">' + [1, 2, 3, 4, 5].map(function (v) { return '<option value="' + v + '" ' + (rule.maxWorkers == v ? 'selected' : '') + '>' + v + '</option>'; }).join('') + '</select></div>' +
-    '<div class="settings-row"><label>Máximo de domingos consecutivos</label><select class="sun-rule-config" data-key="maxConsecutive">' + [1, 2, 3, 4].map(function (v) { return '<option value="' + v + '" ' + (rule.maxConsecutive == v ? 'selected' : '') + '>' + v + ' Domingo(s)</option>'; }).join('') + '</select></div>' +
-    '<div class="settings-row"><label>Cor do cabeçalho de Domingo</label><input type="color" class="color-picker sunday-color" value="' + (state.colors.SUNDAY ? state.colors.SUNDAY.color : '#ef4444') + '"></div>' +
-    '<div class="sub-section-title">Escala semanal por colaborador</div>';
-  state.employees.forEach(function (emp) {
-    var cur = getEmployeeScale(emp);
-    h += '<div class="settings-row"><label>' + emp + '</label><select class="emp-scale" data-emp="' + emp.replace(/"/g, '&quot;') + '"><option value="6x1" ' + (cur === '6x1' ? 'selected' : '') + '>6x1 — 1 folga/semana</option><option value="5x2" ' + (cur === '5x2' ? 'selected' : '') + '>5x2 — 2 folgas/semana</option><option value="off" ' + (cur === 'off' ? 'selected' : '') + '>Não verificar</option></select></div>';
-  });
-  h += '</div>';
+    var rule = state.sundayRule;
+    h += '<div class="settings-section full"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg></div><h3 class="section-title">Regras de Escala</h3></div>' +
+      '<div class="settings-row"><label>Máximo de colaboradores no domingo</label><select class="sun-rule-config" data-key="maxWorkers">' + [1, 2, 3, 4, 5].map(function (v) { return '<option value="' + v + '" ' + (rule.maxWorkers == v ? 'selected' : '') + '>' + v + '</option>'; }).join('') + '</select></div>' +
+      '<div class="settings-row"><label>Máximo de domingos consecutivos</label><select class="sun-rule-config" data-key="maxConsecutive">' + [1, 2, 3, 4].map(function (v) { return '<option value="' + v + '" ' + (rule.maxConsecutive == v ? 'selected' : '') + '>' + v + ' Domingo(s)</option>'; }).join('') + '</select></div>' +
+      '<div class="settings-row"><label>Cor do cabeçalho de Domingo</label><input type="color" class="color-picker sunday-color" value="' + (state.colors.SUNDAY ? state.colors.SUNDAY.color : '#ef4444') + '"></div>' +
+      '<div class="sub-section-title">Escala semanal por colaborador</div>';
+    state.employees.forEach(function (emp) {
+      var cur = getEmployeeScale(emp);
+      h += '<div class="settings-row"><label>' + emp + '</label><select class="emp-scale" data-emp="' + emp.replace(/"/g, '&quot;') + '"><option value="6x1" ' + (cur === '6x1' ? 'selected' : '') + '>6x1 — 1 folga/semana</option><option value="5x2" ' + (cur === '5x2' ? 'selected' : '') + '>5x2 — 2 folgas/semana</option><option value="off" ' + (cur === 'off' ? 'selected' : '') + '>Não verificar</option></select></div>';
+    });
+    h += '</div>';
 
-  h += '<div class="settings-section"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></div><h3 class="section-title">Feriados</h3></div>';
-  var sorted = Object.keys(state.holidays).sort();
-  if (sorted.length === 0) h += '<p style="font-size:12.5px;color:var(--muted);padding:8px 0">Nenhum feriado cadastrado.</p>';
-  h += '<div class="holiday-list">';
-  sorted.forEach(function (k) {
-    var p = k.split('-');
-    h += '<div class="holiday-item"><span>' + p[2] + '/' + p[1] + '/' + p[0] + ' — ' + state.holidays[k] + '</span><button data-del-hol="' + k + '">remover</button></div>';
-  });
-  h += '</div><div class="add-holiday"><input type="date" id="newHolDate"><input type="text" id="newHolName" placeholder="Nome do feriado"><button id="addHolBtn">Adicionar</button></div></div>';
+    h += '<div class="settings-section"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></div><h3 class="section-title">Feriados</h3></div>';
+    var sorted = Object.keys(state.holidays).sort();
+    if (sorted.length === 0) h += '<p style="font-size:12.5px;color:var(--muted);padding:8px 0">Nenhum feriado cadastrado.</p>';
+    h += '<div class="holiday-list">';
+    sorted.forEach(function (k) {
+      var p = k.split('-');
+      h += '<div class="holiday-item"><span>' + p[2] + '/' + p[1] + '/' + p[0] + ' — ' + state.holidays[k] + '</span><button data-del-hol="' + k + '">remover</button></div>';
+    });
+    h += '</div><div class="add-holiday"><input type="date" id="newHolDate"><input type="text" id="newHolName" placeholder="Nome do feriado"><button id="addHolBtn">Adicionar</button></div></div>';
 
-  // ===== DADOS / BACKUP (com input file oculto para o botão Importar) =====
-  h += '<div class="settings-section full">' +
-    '<div class="section-head">' +
-      '<div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5M3 12a9 3 0 0 0 18 0"/></svg></div>' +
-      '<h3 class="section-title">Dados / Backup</h3>' +
-    '</div>' +
-    '<div class="settings-row"><label>Exportar backup completo</label><button class="danger-btn neutral" id="downloadCsvBtn">Baixar CSV</button></div>' +
-    '<div class="settings-row"><label>Importar backup</label>' +
-      '<button class="danger-btn success" id="importBtn">Importar</button>' +
-      '<input type="file" id="importFile" accept=".csv,text/csv" style="display:none">' +
-    '</div>' +
-    '<div class="settings-row"><label>Limpar escala do mês atual</label><button class="danger-btn" id="clearMonthBtn">Limpar</button></div>' +
-    '<div class="settings-row"><label>Apagar todos os dados</label><button class="danger-btn" id="resetBtn">Apagar</button></div>' +
-  '</div>';
+    h += '<div class="settings-section full">' +
+      '<div class="section-head">' +
+        '<div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5M3 12a9 3 0 0 0 18 0"/></svg></div>' +
+        '<h3 class="section-title">Dados / Backup</h3>' +
+      '</div>' +
+      '<div class="settings-row"><label>Exportar backup completo</label><button class="danger-btn neutral" id="downloadCsvBtn">Baixar CSV</button></div>' +
+      '<div class="settings-row"><label>Importar backup</label>' +
+        '<button class="danger-btn success" id="importBtn">Importar</button>' +
+        '<input type="file" id="importFile" accept=".csv,text/csv" style="display:none">' +
+      '</div>' +
+      '<div class="settings-row"><label>Limpar escala do mês atual</label><button class="danger-btn" id="clearMonthBtn">Limpar</button></div>' +
+      '<div class="settings-row"><label>Apagar todos os dados</label><button class="danger-btn" id="resetBtn">Apagar</button></div>' +
+    '</div>';
 
-  viewSettings.innerHTML = h;
-  updateStorageStatus();
-}
+    viewSettings.innerHTML = h;
+    updateStorageStatus();
+  }
 
   function renderActive() {
     renderHeader();
@@ -1163,10 +1045,10 @@ function renderWeek() {
       confirmText: 'Confirmar', isDanger: false,
       onConfirm: function () {
         for (var d = 1; d <= n; d++) delete state.schedule[dateKey(y, m, d)];
-        for (var d = 1; d <= n; d++) {
-          var dow = new Date(y, m, d).getDay();
+        for (var d2 = 1; d2 <= n; d2++) {
+          var dow = new Date(y, m, d2).getDay();
           if (dow === 0) continue;
-          var key = dateKey(y, m, d); state.schedule[key] = {};
+          var key = dateKey(y, m, d2); state.schedule[key] = {};
           state.employees.forEach(function (emp) {
             var def = state.defaultShift[emp];
             if (def && isWorkShift(def)) state.schedule[key][emp] = def;
@@ -1235,10 +1117,10 @@ function renderWeek() {
         var emp = row[0];
         if (state.employees.indexOf(emp) === -1) continue;
         imported = true;
-        for (var d = 1; d <= n; d++) {
-          var code = row[d];
+        for (var d2 = 1; d2 <= n; d2++) {
+          var code = row[d2];
           if (code) {
-            var key = dateKey(y, m, d);
+            var key = dateKey(y, m, d2);
             if (!state.schedule[key]) state.schedule[key] = {};
             state.schedule[key][emp] = code;
           }
@@ -1388,9 +1270,6 @@ function renderWeek() {
     showDialog({ title: 'Imprimir', body: 'O que você deseja imprimir?', confirmText: 'Mês atual', cancelText: 'Semana atual', isDanger: false, onConfirm: function () { doPrint('month'); }, onCancel: function () { doPrint('week'); } });
   }
 
-  // ==========================================
-  // 7. EVENT LISTENERS (Original)
-  // ==========================================
   $('prevBtn').addEventListener('click', function () {
     if (activeView === 'week') currentDate = new Date(currentDate.getTime() - 7 * 86400000);
     else currentDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1);
@@ -1497,7 +1376,6 @@ function renderWeek() {
     }
   });
 
-  // Expor funções para os botões inline do HTML (Logout / Trocar de Time)
   window.changeTeam = function () {
     currentTeam = null;
     updateHeaderUI();
@@ -1512,6 +1390,5 @@ function renderWeek() {
     sb.auth.signOut();
   };
 
-  // Inicia a aplicação checando a sessão
   initApp();
 })();
