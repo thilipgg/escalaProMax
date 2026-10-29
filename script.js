@@ -152,6 +152,7 @@
     document.querySelector('.period-row').style.display = isApp ? 'flex' : 'none';
     document.querySelector('.tabs').style.display = isApp ? 'flex' : 'none';
     document.getElementById('printBtn').style.display = isApp ? 'grid' : 'none';
+    document.getElementById('pngBtn').style.display = isApp ? 'grid' : 'none';
     if (currentTeam) {
       document.getElementById('teamNameDisplay').textContent = currentTeam.name;
       document.title = currentTeam.name + ' · Escala';
@@ -381,6 +382,12 @@
 
   function toast(msg) { toastEl.textContent = msg; toastEl.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(function () { toastEl.classList.remove('show'); }, 2600); }
 
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]);
+    });
+  }
+
   var dialogCallback = null, dialogCancelCb = null;
   function showDialog(opt) {
     $('dialogTitle').textContent = opt.title;
@@ -392,11 +399,14 @@
     dialogCallback = opt.onConfirm || null;
     dialogCancelCb = opt.onCancel || null;
     $('dialogBackdrop').classList.add('open');
+    if (typeof opt.onOpen === 'function') opt.onOpen();
   }
   $('dialogConfirm').addEventListener('click', function () {
+    var cb = dialogCallback;
+    var result = cb ? cb() : undefined;
+    if (result === false) return;
     $('dialogBackdrop').classList.remove('open');
-    var cb = dialogCallback; dialogCallback = null; dialogCancelCb = null;
-    if (cb) cb();
+    dialogCallback = null; dialogCancelCb = null;
   });
   $('dialogCancel').addEventListener('click', function () {
     $('dialogBackdrop').classList.remove('open');
@@ -596,12 +606,13 @@
     return '<div class="empty-state"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg><div>' + msg + '</div></div>';
   }
 
-  // Helper: define o texto que aparecerá na IMPRESSÃO (D, F6, T ou vazio)
   function computePrintText(code, dow) {
     if (code === 'D' || code === 'F6') return code;
     if (dow === 0 && isWorkShift(code)) return 'T';
     return '';
   }
+
+  var _exporting = false;
 
   function renderWeek() {
     if (!state.employees || state.employees.length === 0) {
@@ -760,10 +771,90 @@
 
     viewMonth.innerHTML = h;
     requestAnimationFrame(function () {
+      if (_exporting) return;
       var th = document.querySelector('#gridScrollInner th.today');
       var sc = document.getElementById('gridScrollInner');
       if (th && sc) sc.scrollLeft = Math.max(0, th.offsetLeft - 80);
     });
+  }
+
+  // ==========================================
+  // RENDER DE INTERVALO (usado na exportação)
+  // ==========================================
+  function renderRange(startStr, endStr) {
+    var container = viewMonth;
+    if (!state.employees || state.employees.length === 0) {
+      container.innerHTML = emptyStateHTML('Nenhum colaborador cadastrado.');
+      return;
+    }
+
+    var d1 = new Date(startStr + 'T00:00:00');
+    var d2 = new Date(endStr + 'T00:00:00');
+    if (isNaN(d1.getTime()) || isNaN(d2.getTime()) || d1 > d2) {
+      container.innerHTML = emptyStateHTML('Intervalo inválido.');
+      return;
+    }
+
+    var days = [];
+    var cur = new Date(d1);
+    while (cur <= d2) { days.push(new Date(cur)); cur.setDate(cur.getDate() + 1); }
+    if (days.length === 0) { container.innerHTML = emptyStateHTML('Intervalo vazio.'); return; }
+
+    var todayStr = new Date().toDateString();
+    var h = '<div class="grid-scroll" id="gridScrollInner"><table class="grid-table"><thead><tr><th class="sticky-col">Equipe</th>';
+    for (var di = 0; di < days.length; di++) {
+      var dtH = days[di], dowH = dtH.getDay(), keyH = keyOf(dtH);
+      var miss = checkEssentialShifts(keyH);
+      var missClass = (miss.missing06 || miss.missing14) ? 'missing-essential' : '';
+      var clsH = [dowH === 0 || dowH === 6 ? 'weekend' : '', isHoliday(keyH) ? 'holiday' : '', dtH.toDateString() === todayStr ? 'today' : '', missClass].filter(Boolean).join(' ');
+      var headStyle = '';
+      if (dowH === 0) {
+        var sun = state.colors.SUNDAY || { color: '#ef4444', text: '#ffffff' };
+        headStyle = 'background:' + sun.color + '; color:' + sun.text + ';';
+      }
+      var monthLabel = '';
+      if (di === 0 || dtH.getDate() === 1) {
+        monthLabel = '<span class="dmonth">' + MONTHS[dtH.getMonth()].slice(0, 3) + '</span>';
+      }
+      var alertIcon = (miss.missing06 || miss.missing14) ? '<span style="color:var(--danger);font-size:11px;display:block;line-height:1;margin-top:2px;" title="Falta turno essencial">⚠</span>' : '';
+      h += '<th class="' + clsH + '" style="' + headStyle + '"><span class="dnum">' + dtH.getDate() + '</span><span class="dow" style="' + (dowH === 0 ? 'color:inherit;opacity:.9' : '') + '">' + DOW[dowH] + '</span>' + monthLabel + alertIcon + '</th>';
+    }
+    h += '</tr></thead><tbody>';
+    for (var i = 0; i < state.employees.length; i++) {
+      var emp = state.employees[i];
+      h += '<tr><th class="sticky-col">' + emp + '</th>';
+      for (var j = 0; j < days.length; j++) {
+        var dt = days[j], key = keyOf(dt), dow = dt.getDay();
+        var code = (state.schedule[key] || {})[emp] || '';
+        var s = getShift(code);
+        var cls = ['cell', dow === 0 || dow === 6 ? 'weekend' : '', isHoliday(key) ? 'holiday' : ''].filter(Boolean).join(' ');
+        var style = '';
+        if (s) {
+          if (s.type === 'work') {
+            style = 'color:' + (isHoliday(key) ? '#fff' : s.text) + ';';
+          } else if (dow === 0) {
+            var sunColor = (state.colors.SUNDAY || { color: '#ef4444' }).color;
+            style = 'background:' + sunColor + ';color:#facc15;font-weight:900;';
+          } else {
+            style = 'background:' + s.color + ';color:' + s.text + ';';
+          }
+        }
+        var printTxt = computePrintText(code, dow);
+        var inner = '';
+        if (s) inner += '<span class="cell-txt">' + s.label + '</span>';
+        if (printTxt) inner += '<span class="cell-print">' + printTxt + '</span>';
+        h += '<td class="' + cls + '" data-emp="' + emp + '" data-date="' + key + '" data-print="' + printTxt + '" style="' + style + '">' + inner + '</td>';
+      }
+      h += '</tr>';
+    }
+    h += '</tbody></table></div><div class="legend">';
+    Object.keys(state.shifts).forEach(function (id) {
+      var s = state.shifts[id];
+      if (s.type === 'event') h += '<div class="legend-item"><span class="legend-dot" style="background:' + s.color + ';color:' + s.text + '">' + s.label + '</span>' + s.name + '</div>';
+    });
+    h += '</div>';
+
+    container.innerHTML = h;
   }
 
   function renderSummary() {
@@ -1270,6 +1361,323 @@
     showDialog({ title: 'Imprimir', body: 'O que você deseja imprimir?', confirmText: 'Mês atual', cancelText: 'Semana atual', isDanger: false, onConfirm: function () { doPrint('month'); }, onCancel: function () { doPrint('week'); } });
   }
 
+  // ==========================================
+  // EXPORTAÇÃO DE IMAGEM (PNG / JPG) POR INTERVALO
+  // ==========================================
+  function getDefaultRangeForView() {
+    if (activeView === 'week') {
+      var ws = getWeekStart(currentDate);
+      var we = new Date(ws); we.setDate(we.getDate() + 6);
+      return { start: keyOf(ws), end: keyOf(we) };
+    }
+    var y = currentDate.getFullYear(), m = currentDate.getMonth();
+    return { start: dateKey(y, m, 1), end: dateKey(y, m, daysInMonth(currentDate)) };
+  }
+
+  // Verifica se o navegador suporta Web Share API com arquivos
+  function canShareFiles() {
+    try {
+      if (!navigator.canShare || typeof File === 'undefined') return false;
+      var testFile = new File(['test'], 'test.png', { type: 'image/png' });
+      return navigator.canShare({ files: [testFile] });
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function requestPNGExport() {
+    if (typeof html2canvas === 'undefined') {
+      toast('Biblioteca de exportação não carregou.');
+      return;
+    }
+    if (!state.employees || state.employees.length === 0) {
+      toast('Nenhum colaborador para exportar.');
+      return;
+    }
+
+    var def = getDefaultRangeForView();
+    var shareSupported = canShareFiles();
+
+    var actionHtml;
+    if (shareSupported) {
+      actionHtml =
+        '<div style="margin-bottom:10px">' +
+          '<label class="png-label">Ação</label>' +
+          '<div class="png-format-group">' +
+            '<label class="png-format-opt">' +
+              '<input type="radio" name="pngAction" value="share" checked>' +
+              '<span><strong>Compartilhar</strong><br><small>WhatsApp (sem compressão)</small></span>' +
+            '</label>' +
+            '<label class="png-format-opt">' +
+              '<input type="radio" name="pngAction" value="download">' +
+              '<span><strong>Baixar</strong><br><small>Salvar no dispositivo</small></span>' +
+            '</label>' +
+          '</div>' +
+          '<p style="font-size:10.5px;color:#166534;background:#f0fdf4;border:1px solid #bbf7d0;padding:7px 9px;border-radius:6px;margin:8px 0 0;line-height:1.4">' +
+            '💡 Compartilhando direto, o WhatsApp recebe o arquivo original <strong>sem recomprimir</strong>. Se preferir baixar, envie no WhatsApp como <strong>Documento</strong> (não como Foto).' +
+          '</p>' +
+        '</div>';
+    } else {
+      actionHtml =
+        '<div style="margin-bottom:10px;padding:8px 10px;background:#fffbeb;border:1px solid #fde68a;border-radius:7px;font-size:11px;color:#78350f;line-height:1.45">' +
+          '💡 <strong>Dica WhatsApp:</strong> ao enviar, toque em <strong>+ → Documento</strong> (não em "Foto") para evitar a compressão que deixa a imagem embaçada.' +
+        '</div>';
+    }
+
+    showDialog({
+      title: 'Exportar imagem',
+      body:
+        '<div style="margin-bottom:12px">' +
+          '<label class="png-label">Período</label>' +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
+            '<div>' +
+              '<input type="date" id="pngStartDate" class="png-date-input" value="' + def.start + '">' +
+              '<span style="display:block;font-size:10.5px;color:var(--muted);margin-top:3px;text-align:center">Início</span>' +
+            '</div>' +
+            '<div>' +
+              '<input type="date" id="pngEndDate" class="png-date-input" value="' + def.end + '">' +
+              '<span style="display:block;font-size:10.5px;color:var(--muted);margin-top:3px;text-align:center">Fim</span>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">' +
+          '<button type="button" class="png-preset" data-preset="week">Semana</button>' +
+          '<button type="button" class="png-preset" data-preset="month">Mês</button>' +
+          '<button type="button" class="png-preset" data-preset="next7">Próx. 7 dias</button>' +
+        '</div>' +
+        '<div style="margin-bottom:10px">' +
+          '<label class="png-label">Formato</label>' +
+          '<div class="png-format-group">' +
+            '<label class="png-format-opt">' +
+              '<input type="radio" name="pngFormat" value="png" checked>' +
+              '<span><strong>PNG</strong><br><small>Melhor qualidade</small></span>' +
+            '</label>' +
+            '<label class="png-format-opt">' +
+              '<input type="radio" name="pngFormat" value="jpg">' +
+              '<span><strong>JPG</strong><br><small>Arquivo menor</small></span>' +
+            '</label>' +
+          '</div>' +
+        '</div>' +
+        actionHtml +
+        '<div id="pngRangeHint" style="font-size:11.5px;color:var(--muted);margin-top:6px;text-align:center;min-height:16px"></div>',
+      confirmText: 'Exportar',
+      cancelText: 'Cancelar',
+      isDanger: false,
+      onConfirm: function () {
+        var startEl = document.getElementById('pngStartDate');
+        var endEl = document.getElementById('pngEndDate');
+        var formatEl = document.querySelector('input[name="pngFormat"]:checked');
+        var actionEl = document.querySelector('input[name="pngAction"]:checked');
+        if (!startEl || !endEl) return false;
+        var start = startEl.value, end = endEl.value;
+        if (!start || !end) { toast('Preencha as duas datas.'); return false; }
+        if (start > end) { toast('A data final deve ser depois do início.'); return false; }
+        var d1 = new Date(start + 'T00:00:00');
+        var d2 = new Date(end + 'T00:00:00');
+        var days = Math.round((d2 - d1) / 86400000) + 1;
+        if (days > 62) { toast('Máximo de 62 dias por exportação.'); return false; }
+        var format = formatEl ? formatEl.value : 'png';
+        var action = actionEl ? actionEl.value : 'download';
+        setTimeout(function () { exportImageRange(start, end, format, action); }, 60);
+        return true;
+      }
+    });
+
+    // Presets e hint
+    var hint = document.getElementById('pngRangeHint');
+    var startInp = document.getElementById('pngStartDate');
+    var endInp = document.getElementById('pngEndDate');
+
+    function updateHint() {
+      if (!hint || !startInp || !endInp) return;
+      if (!startInp.value || !endInp.value || startInp.value > endInp.value) { hint.textContent = ''; return; }
+      var a = new Date(startInp.value + 'T00:00:00');
+      var b = new Date(endInp.value + 'T00:00:00');
+      var days = Math.round((b - a) / 86400000) + 1;
+      hint.textContent = days + ' dia' + (days > 1 ? 's' : '') + ' selecionado' + (days > 1 ? 's' : '');
+    }
+    if (startInp) startInp.addEventListener('change', updateHint);
+    if (endInp) endInp.addEventListener('change', updateHint);
+    updateHint();
+
+    document.querySelectorAll('.png-preset').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var preset = btn.dataset.preset;
+        var s, e;
+        if (preset === 'week') {
+          var ws = getWeekStart(currentDate);
+          var we = new Date(ws); we.setDate(we.getDate() + 6);
+          s = keyOf(ws); e = keyOf(we);
+        } else if (preset === 'month') {
+          var y = currentDate.getFullYear(), m = currentDate.getMonth();
+          s = dateKey(y, m, 1); e = dateKey(y, m, daysInMonth(currentDate));
+        } else if (preset === 'next7') {
+          var now = new Date();
+          s = keyOf(now);
+          var e7 = new Date(now); e7.setDate(e7.getDate() + 6);
+          e = keyOf(e7);
+        }
+        if (startInp) startInp.value = s;
+        if (endInp) endInp.value = e;
+        updateHint();
+      });
+    });
+  }
+
+  function formatRangeLabel(startStr, endStr) {
+    var d1 = new Date(startStr + 'T00:00:00');
+    var d2 = new Date(endStr + 'T00:00:00');
+    if (startStr === endStr) {
+      return d1.getDate() + ' ' + MONTHS[d1.getMonth()].slice(0, 3) + ' ' + d1.getFullYear();
+    }
+    if (d1.getMonth() === d2.getMonth() && d1.getFullYear() === d2.getFullYear()) {
+      return d1.getDate() + ' – ' + d2.getDate() + ' ' + MONTHS[d1.getMonth()].slice(0, 3) + ' ' + d1.getFullYear();
+    }
+    return d1.getDate() + ' ' + MONTHS[d1.getMonth()].slice(0, 3) +
+           ' – ' + d2.getDate() + ' ' + MONTHS[d2.getMonth()].slice(0, 3) +
+           ' ' + d2.getFullYear();
+  }
+
+  function downloadBlob(blob, filename) {
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement('a');
+    link.download = filename;
+    link.href = url;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  async function exportImageRange(startStr, endStr, format, action) {
+    format = format === 'jpg' ? 'jpg' : 'png';
+    action = action === 'share' ? 'share' : 'download';
+
+    if (typeof html2canvas === 'undefined') {
+      toast('Biblioteca de exportação não disponível.');
+      return;
+    }
+    if (!state.employees || state.employees.length === 0) {
+      toast('Nenhum colaborador para exportar.');
+      return;
+    }
+    if (startStr > endStr) {
+      toast('Intervalo inválido.');
+      return;
+    }
+
+    toast('Gerando imagem...');
+
+    var d1 = new Date(startStr + 'T00:00:00');
+    var d2 = new Date(endStr + 'T00:00:00');
+    var dayCount = Math.round((d2 - d1) / 86400000) + 1;
+
+    var periodStr = formatRangeLabel(startStr, endStr);
+    var width = Math.max(1000, 130 + dayCount * 60 + 60);
+
+    var wrapper = document.createElement('div');
+    wrapper.className = 'png-export-wrapper';
+    wrapper.style.width = width + 'px';
+
+    var header = document.createElement('div');
+    header.className = 'png-export-header';
+    header.innerHTML = '<div class="png-export-team">' + escapeHtml(state.teamName) + '</div>' +
+                       '<div class="png-export-period">' + escapeHtml(periodStr) + '</div>';
+
+    var content = document.createElement('div');
+    content.className = 'view active';
+
+    wrapper.appendChild(header);
+    wrapper.appendChild(content);
+    document.body.appendChild(wrapper);
+
+    var originalMonth = viewMonth;
+    _exporting = true;
+
+    try {
+      viewMonth = content;
+      renderRange(startStr, endStr);
+    } finally {
+      viewMonth = originalMonth;
+    }
+
+    // Aguarda fontes web carregarem (crítico para qualidade do texto)
+    try {
+      if (document.fonts && document.fonts.ready) {
+        await document.fonts.ready;
+      }
+    } catch (e) {}
+
+    await new Promise(function (resolve) {
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+          setTimeout(resolve, 150);
+        });
+      });
+    });
+
+    try {
+      var EXPORT_SCALE = 3;
+      var canvas = await html2canvas(wrapper, {
+        backgroundColor: '#ffffff',
+        scale: EXPORT_SCALE,
+        useCORS: true,
+        logging: false,
+        imageTimeout: 0,
+        allowTaint: false
+      });
+
+      var mimeType = format === 'jpg' ? 'image/jpeg' : 'image/png';
+      var quality = format === 'jpg' ? 0.95 : 1;
+
+      // Converte para Blob (necessário para compartilhar e melhor para memória)
+      var blob = await new Promise(function (resolve) {
+        canvas.toBlob(function (b) { resolve(b); }, mimeType, quality);
+      });
+
+      if (!blob) throw new Error('Falha ao gerar blob');
+
+      var safeName = (state.teamName || 'equipe').replace(/[^\w\-]+/g, '-').toLowerCase();
+      var ext = format === 'jpg' ? 'jpg' : 'png';
+      var filename = 'escala-' + safeName + '-' + startStr + '_' + endStr + '.' + ext;
+
+      // ===== COMPARTILHAR via Web Share API (envia como documento, sem compressão) =====
+      if (action === 'share' && canShareFiles()) {
+        try {
+          var file = new File([blob], filename, { type: mimeType });
+          if (navigator.canShare({ files: [file] })) {
+            await navigator.share({
+              files: [file],
+              title: 'Escala ' + state.teamName,
+              text: 'Escala ' + state.teamName + ' (' + periodStr + ')'
+            });
+            toast('✓ Compartilhado com qualidade original');
+            return;
+          }
+        } catch (err) {
+          // Usuário cancelou o share sheet → não fazer fallback
+          if (err && err.name === 'AbortError') return;
+          console.warn('[Share] Falhou, usando download:', err);
+          // cai no download abaixo
+        }
+      }
+
+      // ===== DOWNLOAD =====
+      downloadBlob(blob, filename);
+      toast('✓ Exportado com sucesso!');
+
+    } catch (err) {
+      console.error('[Image Export] Erro:', err);
+      toast('Erro ao gerar imagem.');
+    } finally {
+      _exporting = false;
+      if (wrapper.parentNode) wrapper.parentNode.removeChild(wrapper);
+    }
+  }
+
+  // ==========================================
+  // EVENTOS DA UI
+  // ==========================================
   $('prevBtn').addEventListener('click', function () {
     if (activeView === 'week') currentDate = new Date(currentDate.getTime() - 7 * 86400000);
     else currentDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1);
@@ -1285,6 +1693,7 @@
     switchToView(btn.dataset.view);
   });
   $('printBtn').addEventListener('click', requestPrint);
+  $('pngBtn').addEventListener('click', requestPNGExport);
 
   viewWeek.addEventListener('click', function (e) {
     var cell = e.target.closest('.wk-cell');

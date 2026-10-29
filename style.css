@@ -230,7 +230,7 @@ main{
 
 .dialog-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.5);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;padding:20px;z-index:40}
 .dialog-backdrop.open{display:flex}
-.dialog{background:#fff;border-radius:var(--radius-lg);max-width:420px;width:100%;padding:22px;box-shadow:0 25px 50px -12px rgba(0,0,0,.25);animation:scaleIn .18s ease-out}
+.dialog{background:#fff;border-radius:var(--radius-lg);max-width:460px;width:100%;padding:22px;box-shadow:0 25px 50px -12px rgba(0,0,0,.25);animation:scaleIn .18s ease-out}
 @keyframes scaleIn{from{transform:scale(.95);opacity:0}to{transform:scale(1);opacity:1}}
 .dialog h3{margin:0 0 10px;font-size:clamp(15px, 1.2vw, 17px);color:var(--text);font-weight:700}
 .dialog .body{font-size:clamp(12.5px, 0.9vw, 13.5px);color:var(--text-secondary);line-height:1.6;margin-bottom:20px}
@@ -243,6 +243,81 @@ main{
 .dialog-confirm:hover{background:#dc2626}
 .dialog-confirm.primary{background:linear-gradient(135deg,#3b82f6,#1d4ed8);box-shadow:0 4px 12px rgba(37,99,235,.3)}
 .dialog-confirm.primary:hover{background:linear-gradient(135deg,#2563eb,#1e40af)}
+
+/* ============ PNG EXPORT DIALOG ============ */
+.png-label{
+  display:block;
+  font-size:11px;
+  font-weight:700;
+  text-transform:uppercase;
+  letter-spacing:.05em;
+  color:var(--muted);
+  margin-bottom:6px;
+}
+.png-date-input{
+  width:100%;
+  padding:9px 11px;
+  border:1px solid var(--border-strong);
+  border-radius:8px;
+  font-size:13px;
+  background:var(--surface);
+  color:var(--text);
+  outline:none;
+  transition:border .15s, box-shadow .15s;
+}
+.png-date-input:focus{
+  border-color:var(--primary);
+  box-shadow:0 0 0 3px rgba(37,99,235,.12);
+}
+.png-preset{
+  flex:1;
+  padding:7px 8px;
+  border:1px solid var(--border-strong);
+  border-radius:7px;
+  font-size:11.5px;
+  font-weight:600;
+  background:var(--surface-2);
+  color:var(--text-secondary);
+  transition:all .15s;
+  cursor:pointer;
+  white-space:nowrap;
+}
+.png-preset:hover{
+  background:var(--primary-soft);
+  color:var(--primary);
+  border-color:var(--primary);
+}
+.png-format-group{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:8px;
+}
+.png-format-opt{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  padding:10px;
+  border:1.5px solid var(--border-strong);
+  border-radius:8px;
+  cursor:pointer;
+  transition:all .15s;
+  font-size:11.5px;
+  line-height:1.3;
+}
+.png-format-opt:hover{
+  border-color:var(--primary);
+  background:var(--primary-soft);
+}
+.png-format-opt input{
+  margin:0;
+  accent-color:var(--primary);
+  flex-shrink:0;
+}
+.png-format-opt small{
+  color:var(--muted);
+  font-size:10px;
+  font-weight:500;
+}
 
 .toast{position:fixed;left:50%;bottom:calc(20px + var(--safe-bot));transform:translate(-50%,20px);opacity:0;background:var(--text);color:#fff;padding:12px 20px;border-radius:12px;font-size:clamp(12px, 0.85vw, 13px);font-weight:500;z-index:100;transition:all .25s;pointer-events:none;box-shadow:0 10px 25px rgba(0,0,0,.25);max-width:90vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .toast.show{transform:translate(-50%,0);opacity:1}
@@ -351,7 +426,7 @@ main{
   .grid-table td.cell{font-size:8pt !important;}
   .grid-table td.cell:hover{transform:none !important;filter:none !important;}
 
-  /* Conteúdo das células na impressão: esconde texto da tela, mostra texto de impressão */
+  /* Conteúdo das células na impressão */
   .cell-txt { display: none !important; }
   .cell-print {
     display: inline !important;
@@ -359,10 +434,9 @@ main{
     font-weight: 900 !important;
     line-height: 1 !important;
   }
-  /* Esconde a bolinha de aviso */
   .has-warning::after { display: none !important; }
 
-  /* Fundos: D amarelo, F6 verde, restante branco */
+  /* Fundos na impressão */
   .week-grid .wk-cell:not([data-print="D"]):not([data-print="F6"]) { background: #fff !important; }
   .week-grid .wk-cell[data-print="D"] { background: #fef08a !important; }
   .week-grid .wk-cell[data-print="F6"] { background: #4ade80 !important; }
@@ -371,11 +445,131 @@ main{
   .grid-table td.cell[data-print="D"] { background: #fef08a !important; }
   .grid-table td.cell[data-print="F6"] { background: #4ade80 !important; }
 
-  /* Cabeçalhos e demais áreas — cores originais preservadas */
-  /* (mantidas pelos estilos base; aqui só garantimos que não sejam sobrescritas) */
-
   /* Legenda */
   .legend{display:flex !important;flex-wrap:wrap !important;gap:5px !important;padding:8px 0 0 !important;margin:0 !important;page-break-inside:avoid;}
   .legend-item{font-size:7pt !important;padding:3px 7px !important;box-shadow:none !important;border:1px solid #64748b !important;}
   .legend-dot{width:11px !important;height:11px !important;font-size:6pt !important;border:1px solid rgba(0,0,0,.25) !important;}
+}
+
+/* ============================================================
+   PNG/JPG EXPORT — Wrapper off-screen usado pelo html2canvas
+   ============================================================ */
+.png-export-wrapper {
+  position: absolute;
+  left: -99999px;
+  top: 0;
+  background: #ffffff;
+  padding: 26px 30px;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: #0f172a;
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* Dimensões fixas (não dependem de viewport) para exports consistentes */
+  --wk-name-w: 120px;
+  --sticky-col-w: 120px;
+  --day-min-w: 44px;
+  --space-page: 0px;
+  --fs-base: 13px;
+}
+.png-export-wrapper .png-export-header {
+  text-align: center;
+  padding-bottom: 12px;
+  margin-bottom: 18px;
+  border-bottom: 2px solid #0f172a;
+}
+.png-export-wrapper .png-export-team {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -.02em;
+  color: #0f172a;
+  line-height: 1.1;
+}
+.png-export-wrapper .png-export-period {
+  font-size: 14px;
+  color: #475569;
+  margin-top: 4px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+/* Esconde bolinhas de aviso e alertas para uma imagem limpa */
+.png-export-wrapper .week-alerts,
+.png-export-wrapper .has-warning::after,
+.png-export-wrapper .sun-count { display: none !important; }
+
+/* Neutraliza layout flex da aplicação */
+.png-export-wrapper .view {
+  display: block !important;
+  flex: none !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+}
+
+/* Grade no export */
+.png-export-wrapper .week-grid {
+  flex: none !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  grid-auto-rows: minmax(44px, auto) !important;
+  border-radius: 8px !important;
+  overflow: hidden !important;
+}
+.png-export-wrapper .grid-scroll {
+  flex: none !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  overflow: hidden !important;
+  border-radius: 8px !important;
+}
+.png-export-wrapper .grid-table {
+  height: auto !important;
+  width: 100% !important;
+}
+.png-export-wrapper .grid-table thead th {
+  position: static !important;
+}
+.png-export-wrapper .grid-table .sticky-col {
+  position: static !important;
+}
+.png-export-wrapper .wk-cell:hover,
+.png-export-wrapper .grid-table td.cell:hover {
+  transform: none !important;
+  filter: none !important;
+}
+.png-export-wrapper .legend {
+  padding-top: 16px !important;
+}
+
+/* ============================================================
+   TIPOGRAFIA FIXA (em px) — principal causa da "baixa qualidade"
+   Antes eram clamp(11px, 0.85vw, 14px): em celular ficavam 11px,
+   na imagem final o texto saía minúsculo. Agora é sempre 13-16px.
+   ============================================================ */
+.png-export-wrapper .grid-table { font-size: 13px !important; }
+.png-export-wrapper .grid-table thead th .dnum { font-size: 14px !important; line-height: 1.1 !important; padding-top: 5px !important; }
+.png-export-wrapper .grid-table thead th .dow { font-size: 10px !important; line-height: 1.2 !important; padding-bottom: 4px !important; letter-spacing: .03em !important; }
+.png-export-wrapper .grid-table .sticky-col { font-size: 13px !important; padding-left: 14px !important; }
+.png-export-wrapper .grid-table thead .sticky-col { font-size: 11px !important; padding-left: 14px !important; }
+.png-export-wrapper .grid-table td.cell { font-size: 13px !important; }
+
+.png-export-wrapper .wk-emp { font-size: 13px !important; }
+.png-export-wrapper .wk-dow { font-size: 10px !important; letter-spacing: .03em !important; }
+.png-export-wrapper .wk-num { font-size: 16px !important; }
+.png-export-wrapper .wk-cell { font-size: 16px !important; }
+
+.png-export-wrapper .legend-item { font-size: 12px !important; padding: 6px 11px !important; }
+.png-export-wrapper .legend-dot { font-size: 9px !important; width: 18px !important; height: 18px !important; }
+
+/* Rótulo do mês no cabeçalho do export */
+.png-export-wrapper .dmonth {
+  display: block;
+  font-size: 8px;
+  color: #94a3b8;
+  line-height: 1;
+  margin-top: 1px;
+  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: .04em;
 }
