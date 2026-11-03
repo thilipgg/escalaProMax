@@ -779,7 +779,7 @@
   }
 
   // ==========================================
-  // RENDER DE INTERVALO (usado na exportação)
+  // RENDER DE INTERVALO (usado na exportação e impressão)
   // ==========================================
   function renderRange(startStr, endStr) {
     var container = viewMonth;
@@ -1338,31 +1338,13 @@
   function setPrintOrientation(mode) {
     var st = document.getElementById('printPageStyle');
     if (!st) { st = document.createElement('style'); st.id = 'printPageStyle'; document.head.appendChild(st); }
-    st.textContent = mode === 'week' ? '@page { size: A4 portrait; margin: 10mm; }' : '@page { size: A4 landscape; margin: 8mm; }';
-  }
-
-  function doPrint(mode) {
-    var originalView = activeView;
-    if (activeView !== mode) switchToView(mode);
-    $('printTeam').textContent = state.teamName;
-    $('printPeriod').textContent = periodTitle.textContent;
-    $('printFooter').textContent = 'Gerado em ' + new Date().toLocaleString('pt-BR');
-    setPrintOrientation(mode);
-    var restore = function () {
-      window.removeEventListener('afterprint', restore);
-      if (activeView !== originalView) switchToView(originalView);
-    };
-    window.addEventListener('afterprint', restore);
-    setTimeout(function () { window.print(); }, 80);
-  }
-
-  function requestPrint() {
-    if (activeView === 'week' || activeView === 'month') { doPrint(activeView); return; }
-    showDialog({ title: 'Imprimir', body: 'O que você deseja imprimir?', confirmText: 'Mês atual', cancelText: 'Semana atual', isDanger: false, onConfirm: function () { doPrint('month'); }, onCancel: function () { doPrint('week'); } });
+    st.textContent = mode === 'portrait'
+      ? '@page { size: A4 portrait; margin: 10mm; }'
+      : '@page { size: A4 landscape; margin: 8mm; }';
   }
 
   // ==========================================
-  // EXPORTAÇÃO DE IMAGEM (PNG / JPG) POR INTERVALO
+  // IMPRESSÃO POR PERÍODO (data início / fim)
   // ==========================================
   function getDefaultRangeForView() {
     if (activeView === 'week') {
@@ -1374,7 +1356,153 @@
     return { start: dateKey(y, m, 1), end: dateKey(y, m, daysInMonth(currentDate)) };
   }
 
-  // Verifica se o navegador suporta Web Share API com arquivos
+  function formatRangeLabel(startStr, endStr) {
+    var d1 = new Date(startStr + 'T00:00:00');
+    var d2 = new Date(endStr + 'T00:00:00');
+    if (startStr === endStr) {
+      return d1.getDate() + ' ' + MONTHS[d1.getMonth()].slice(0, 3) + ' ' + d1.getFullYear();
+    }
+    if (d1.getMonth() === d2.getMonth() && d1.getFullYear() === d2.getFullYear()) {
+      return d1.getDate() + ' – ' + d2.getDate() + ' ' + MONTHS[d1.getMonth()].slice(0, 3) + ' ' + d1.getFullYear();
+    }
+    return d1.getDate() + ' ' + MONTHS[d1.getMonth()].slice(0, 3) +
+           ' – ' + d2.getDate() + ' ' + MONTHS[d2.getMonth()].slice(0, 3) +
+           ' ' + d2.getFullYear();
+  }
+
+  function doPrintRange(startStr, endStr) {
+    var originalView = activeView;
+
+    // Gera a grade do intervalo no container do mês
+    _exporting = true;
+    try {
+      renderRange(startStr, endStr);
+    } finally {
+      _exporting = false;
+    }
+
+    // Força view "month" (o CSS de print reaproveita o layout grid-table)
+    activeView = 'month';
+    document.querySelectorAll('.tab').forEach(function (t) {
+      t.classList.toggle('active', t.dataset.view === 'month');
+    });
+    document.querySelectorAll('.view').forEach(function (v) {
+      v.classList.toggle('active', v.id === 'view-month');
+    });
+
+    var dayCount = Math.round((new Date(endStr + 'T00:00:00') - new Date(startStr + 'T00:00:00')) / 86400000) + 1;
+    // <= 10 dias: melhor retrato; senão paisagem (mais colunas cabem)
+    setPrintOrientation(dayCount <= 10 ? 'portrait' : 'landscape');
+
+    $('printTeam').textContent = state.teamName;
+    $('printPeriod').textContent = formatRangeLabel(startStr, endStr);
+    $('printFooter').textContent = 'Gerado em ' + new Date().toLocaleString('pt-BR');
+
+    var restore = function () {
+      window.removeEventListener('afterprint', restore);
+      switchToView(originalView);
+    };
+    window.addEventListener('afterprint', restore);
+
+    setTimeout(function () { window.print(); }, 100);
+  }
+
+  function requestPrint() {
+    if (!state.employees || state.employees.length === 0) {
+      toast('Nenhum colaborador para imprimir.');
+      return;
+    }
+    var def = getDefaultRangeForView();
+
+    showDialog({
+      title: 'Imprimir escala',
+      body:
+        '<div style="margin-bottom:12px">' +
+          '<label class="png-label">Período</label>' +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
+            '<div>' +
+              '<input type="date" id="printStartDate" class="png-date-input" value="' + def.start + '">' +
+              '<span style="display:block;font-size:10.5px;color:var(--muted);margin-top:3px;text-align:center">Início</span>' +
+            '</div>' +
+            '<div>' +
+              '<input type="date" id="printEndDate" class="png-date-input" value="' + def.end + '">' +
+              '<span style="display:block;font-size:10.5px;color:var(--muted);margin-top:3px;text-align:center">Fim</span>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">' +
+          '<button type="button" class="png-preset" data-print-preset="week">Semana atual</button>' +
+          '<button type="button" class="png-preset" data-print-preset="month">Mês atual</button>' +
+          '<button type="button" class="png-preset" data-print-preset="next7">Próximos 7 dias</button>' +
+        '</div>' +
+        '<div style="padding:8px 10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:7px;font-size:11px;color:#1e3a8a;line-height:1.45">' +
+          '💡 <strong>Impressão</strong> gera a grade da escala em papel. Para uma imagem (WhatsApp), use o botão <strong>Exportar PNG</strong>.' +
+        '</div>' +
+        '<div id="printRangeHint" style="font-size:11.5px;color:var(--muted);margin-top:8px;text-align:center;min-height:16px"></div>',
+      confirmText: 'Imprimir',
+      cancelText: 'Cancelar',
+      isDanger: false,
+      onConfirm: function () {
+        var startEl = document.getElementById('printStartDate');
+        var endEl = document.getElementById('printEndDate');
+        if (!startEl || !endEl) return false;
+        var start = startEl.value, end = endEl.value;
+        if (!start || !end) { toast('Preencha as duas datas.'); return false; }
+        if (start > end) { toast('A data final deve ser depois do início.'); return false; }
+        var d1 = new Date(start + 'T00:00:00');
+        var d2 = new Date(end + 'T00:00:00');
+        var days = Math.round((d2 - d1) / 86400000) + 1;
+        if (days > 62) { toast('Máximo de 62 dias por impressão.'); return false; }
+        setTimeout(function () { doPrintRange(start, end); }, 80);
+        return true;
+      }
+    });
+
+    // Presets + hint no diálogo de impressão
+    var hint = document.getElementById('printRangeHint');
+    var startInp = document.getElementById('printStartDate');
+    var endInp = document.getElementById('printEndDate');
+
+    function updateHint() {
+      if (!hint || !startInp || !endInp) return;
+      if (!startInp.value || !endInp.value || startInp.value > endInp.value) { hint.textContent = ''; return; }
+      var a = new Date(startInp.value + 'T00:00:00');
+      var b = new Date(endInp.value + 'T00:00:00');
+      var days = Math.round((b - a) / 86400000) + 1;
+      hint.textContent = days + ' dia' + (days > 1 ? 's' : '') + ' selecionado' + (days > 1 ? 's' : '');
+    }
+    if (startInp) startInp.addEventListener('change', updateHint);
+    if (endInp) endInp.addEventListener('change', updateHint);
+    updateHint();
+
+    // Escopo os presets ao dialogBody para evitar conflito com o de PNG
+    document.querySelectorAll('#dialogBody [data-print-preset]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var preset = btn.dataset.printPreset;
+        var s, e;
+        if (preset === 'week') {
+          var ws = getWeekStart(currentDate);
+          var we = new Date(ws); we.setDate(we.getDate() + 6);
+          s = keyOf(ws); e = keyOf(we);
+        } else if (preset === 'month') {
+          var y = currentDate.getFullYear(), m = currentDate.getMonth();
+          s = dateKey(y, m, 1); e = dateKey(y, m, daysInMonth(currentDate));
+        } else if (preset === 'next7') {
+          var now = new Date();
+          s = keyOf(now);
+          var e7 = new Date(now); e7.setDate(e7.getDate() + 6);
+          e = keyOf(e7);
+        }
+        if (startInp) startInp.value = s;
+        if (endInp) endInp.value = e;
+        updateHint();
+      });
+    });
+  }
+
+  // ==========================================
+  // EXPORTAÇÃO DE IMAGEM (PNG / JPG) POR INTERVALO
+  // ==========================================
   function canShareFiles() {
     try {
       if (!navigator.canShare || typeof File === 'undefined') return false;
@@ -1483,7 +1611,6 @@
       }
     });
 
-    // Presets e hint
     var hint = document.getElementById('pngRangeHint');
     var startInp = document.getElementById('pngStartDate');
     var endInp = document.getElementById('pngEndDate');
@@ -1500,7 +1627,7 @@
     if (endInp) endInp.addEventListener('change', updateHint);
     updateHint();
 
-    document.querySelectorAll('.png-preset').forEach(function (btn) {
+    document.querySelectorAll('#dialogBody [data-preset]').forEach(function (btn) {
       btn.addEventListener('click', function () {
         var preset = btn.dataset.preset;
         var s, e;
@@ -1522,20 +1649,6 @@
         updateHint();
       });
     });
-  }
-
-  function formatRangeLabel(startStr, endStr) {
-    var d1 = new Date(startStr + 'T00:00:00');
-    var d2 = new Date(endStr + 'T00:00:00');
-    if (startStr === endStr) {
-      return d1.getDate() + ' ' + MONTHS[d1.getMonth()].slice(0, 3) + ' ' + d1.getFullYear();
-    }
-    if (d1.getMonth() === d2.getMonth() && d1.getFullYear() === d2.getFullYear()) {
-      return d1.getDate() + ' – ' + d2.getDate() + ' ' + MONTHS[d1.getMonth()].slice(0, 3) + ' ' + d1.getFullYear();
-    }
-    return d1.getDate() + ' ' + MONTHS[d1.getMonth()].slice(0, 3) +
-           ' – ' + d2.getDate() + ' ' + MONTHS[d2.getMonth()].slice(0, 3) +
-           ' ' + d2.getFullYear();
   }
 
   function downloadBlob(blob, filename) {
@@ -1601,7 +1714,6 @@
       viewMonth = originalMonth;
     }
 
-    // Aguarda fontes web carregarem (crítico para qualidade do texto)
     try {
       if (document.fonts && document.fonts.ready) {
         await document.fonts.ready;
@@ -1630,7 +1742,6 @@
       var mimeType = format === 'jpg' ? 'image/jpeg' : 'image/png';
       var quality = format === 'jpg' ? 0.95 : 1;
 
-      // Converte para Blob (necessário para compartilhar e melhor para memória)
       var blob = await new Promise(function (resolve) {
         canvas.toBlob(function (b) { resolve(b); }, mimeType, quality);
       });
@@ -1641,7 +1752,6 @@
       var ext = format === 'jpg' ? 'jpg' : 'png';
       var filename = 'escala-' + safeName + '-' + startStr + '_' + endStr + '.' + ext;
 
-      // ===== COMPARTILHAR via Web Share API (envia como documento, sem compressão) =====
       if (action === 'share' && canShareFiles()) {
         try {
           var file = new File([blob], filename, { type: mimeType });
@@ -1655,14 +1765,11 @@
             return;
           }
         } catch (err) {
-          // Usuário cancelou o share sheet → não fazer fallback
           if (err && err.name === 'AbortError') return;
           console.warn('[Share] Falhou, usando download:', err);
-          // cai no download abaixo
         }
       }
 
-      // ===== DOWNLOAD =====
       downloadBlob(blob, filename);
       toast('✓ Exportado com sucesso!');
 
