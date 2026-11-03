@@ -573,3 +573,23 @@ main{
   font-weight: 600;
   letter-spacing: .04em;
 }
+
+/* Rótulo do mês no cabeçalho de intervalos (impressão e visualização em range) */
+.grid-table thead th .dmonth {
+  display: block;
+  font-size: 8px;
+  color: #94a3b8;
+  line-height: 1;
+  margin-top: 1px;
+  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: .04em;
+}
+
+@media print {
+  .grid-table thead th .dmonth {
+    font-size: 6pt !important;
+    margin-top: 0 !important;
+    line-height: 1 !important;
+  }
+}
