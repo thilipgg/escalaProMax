@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
+<script>(function(){try{var t=localStorage.getItem('escala-theme');var d=t==='dark'||((t!=='light')&&window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);if(d){document.documentElement.setAttribute('data-theme','dark');var m=document.querySelector('meta[name="theme-color"]');if(m)m.setAttribute('content','#0b1220');}}catch(e){}})();</script>
 <title>Escala · Equipe</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -22,6 +23,7 @@
         <div class="brand-title">Escala</div>
         <div class="brand-team" id="teamNameDisplay">Equipe</div>
       </div>
+      <button class="print-btn" id="themeBtn" aria-label="Mudar tema" title="Mudar tema" type="button"></button>
       <button class="print-btn" id="printBtn" aria-label="Imprimir" title="Imprimir (período personalizado)">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="6 9 6 2 18 2 18 9"/>
@@ -58,6 +60,12 @@
       <button class="tab" data-view="summary">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" x2="12" y1="20" y2="10"/><line x1="18" x2="18" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="16"/></svg>
         <span>Resumo</span>
+        <span class="tab-badge hidden" id="summaryBadge"></span>
+      </button>
+      <button class="tab" data-view="notes">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15.5 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3Z"/><path d="M15 3v6h6"/></svg>
+        <span>Notas</span>
+        <span class="tab-badge hidden" id="notesBadge"></span>
       </button>
       <button class="tab" data-view="settings">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -75,6 +83,7 @@
   <section class="view active" id="view-week"></section>
   <section class="view" id="view-month"></section>
   <section class="view" id="view-summary"></section>
+  <section class="view" id="view-notes"></section>
   <section class="view" id="view-settings"></section>
   <div class="print-footer" id="printFooter"></div>
 </main>
@@ -90,6 +99,18 @@
   <div class="shift-grid" id="workShiftGrid"></div>
   <div class="sheet-section-title" id="eventSectionTitle">Eventos e Folgas</div>
   <div class="shift-grid" id="eventShiftGrid"></div>
+  <div class="sheet-section-title" id="notesSectionTitle">Anotações</div>
+  <div class="sheet-notes">
+    <div class="notes-list" id="sheetNotesList"></div>
+    <div class="note-composer">
+      <textarea id="noteInput" class="note-textarea" rows="2" maxlength="600" placeholder="Escreva uma anotação…"></textarea>
+      <div class="note-composer-row">
+        <select id="noteScope" class="note-select"></select>
+        <label class="note-imp"><input type="checkbox" id="noteImportant"> Importante</label>
+        <button type="button" class="note-add" id="noteAddBtn">Adicionar</button>
+      </div>
+    </div>
+  </div>
   <button class="sheet-clear" id="sheetClear">Limpar célula</button>
 </div>
 

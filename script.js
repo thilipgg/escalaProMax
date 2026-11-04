@@ -55,7 +55,9 @@
       schedule: {},
       holidays: {},
       colors: { SUNDAY: { color: '#ef4444', text: '#ffffff' } },
-      sundayRule: { maxWorkers: 2, maxConsecutive: 2 }
+      sundayRule: { maxWorkers: 2, maxConsecutive: 2 },
+      limits: { maxConsecutiveDays: 6 },
+      notes: {}
     };
   }
 
@@ -69,6 +71,8 @@
     if (!s.defaultShift) s.defaultShift = {};
     if (!s.employeeScale) s.employeeScale = {};
     if (!s.sundayRule) s.sundayRule = { maxWorkers: 2, maxConsecutive: 2 };
+    if (!s.limits) s.limits = { maxConsecutiveDays: 6 };
+    if (!s.notes || typeof s.notes !== 'object') s.notes = {};
     return s;
   }
 
@@ -373,7 +377,7 @@
 
   var $ = function (id) { return document.getElementById(id); };
   var periodTitle = $('periodTitle'), tabsEl = $('tabs');
-  var viewWeek = $('view-week'), viewMonth = $('view-month'), viewSummary = $('view-summary'), viewSettings = $('view-settings');
+  var viewWeek = $('view-week'), viewMonth = $('view-month'), viewSummary = $('view-summary'), viewSettings = $('view-settings'), viewNotes = $('view-notes');
   var sheet = $('sheet'), sheetBackdrop = $('sheetBackdrop'), sheetTitle = $('sheetTitle'), sheetSub = $('sheetSub');
   var workShiftGrid = $('workShiftGrid'), eventShiftGrid = $('eventShiftGrid'), sheetClear = $('sheetClear');
   var workSectionTitle = $('workSectionTitle'), eventSectionTitle = $('eventSectionTitle');
@@ -414,6 +418,20 @@
     if (cb) cb();
   });
 
+  // Clicar fora do diálogo (ou Esc) = Cancelar. O clique só conta se começou e terminou no fundo,
+  // para não fechar ao arrastar uma seleção de texto de dentro do diálogo para fora.
+  var _dlgDownOnBackdrop = false;
+  $('dialogBackdrop').addEventListener('pointerdown', function (e) { _dlgDownOnBackdrop = (e.target === this); });
+  $('dialogBackdrop').addEventListener('click', function (e) {
+    if (e.target === this && _dlgDownOnBackdrop) $('dialogCancel').click();
+    _dlgDownOnBackdrop = false;
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    if ($('dialogBackdrop').classList.contains('open')) { $('dialogCancel').click(); return; }
+    if (sheet.classList.contains('open')) closeSheet();
+  });
+
   function pad(n) { return String(n).padStart(2, '0'); }
   function dateKey(y, m, d) { return y + '-' + pad(m + 1) + '-' + pad(d); }
   function keyOf(d) { return dateKey(d.getFullYear(), d.getMonth(), d.getDate()); }
@@ -444,8 +462,8 @@
   function isWorkShift(id) { var s = getShift(id); return s && s.type === 'work'; }
   function shiftStartMin(id) { var s = getShift(id); return s && s.type === 'work' ? parseTime(s.start) : null; }
   function shiftEndMin(id) { var s = getShift(id); if (!s || s.type !== 'work') return null; var st = parseTime(s.start), en = parseTime(s.end); if (en < st) en += 1440; return en; }
-  function shiftNextMin(id) { var en = shiftEndMin(id); if (en === null) return null; return (en + REST_11H) % 1440; }
-  function isValidTransition(prev, next) { if (!isWorkShift(prev) || !isWorkShift(next)) return true; return shiftStartMin(next) >= shiftNextMin(prev); }
+  function shiftNextMin(id) { var en = shiftEndMin(id); if (en === null) return null; return Math.max(0, en + REST_11H - 1440); }
+  function isValidTransition(prev, next) { if (!isWorkShift(prev) || !isWorkShift(next)) return true; return (1440 + shiftStartMin(next)) - shiftEndMin(prev) >= REST_11H; }
 
   function getEmployeeScale(emp) {
     return state.employeeScale && state.employeeScale[emp] ? state.employeeScale[emp] : '6x1';
@@ -467,34 +485,6 @@
       else folgas++;
     }
     return { folgas: folgas, work: work, planned: planned, empty: empty };
-  }
-
-  function getWeekWarningsForMonth(y, m) {
-    var warnings = [];
-    var monthStart = new Date(y, m, 1);
-    var monthEnd = new Date(y, m + 1, 0);
-    var w = getWeekStart(monthStart);
-    var guard = 0;
-    while (w.getTime() <= monthEnd.getTime() && guard++ < 10) {
-      var weekStart = new Date(w);
-      var weekEnd = new Date(w); weekEnd.setDate(w.getDate() + 6);
-      (function (ws, we) {
-        state.employees.forEach(function (emp) {
-          var scale = getEmployeeScale(emp);
-          var req = requiredFolgas(scale);
-          if (req === 0) return;
-          var info = getWeekFolgas(emp, ws);
-          if (!info.planned) return;
-          if (info.folgas + info.empty < req) {
-            warnings.push(emp + ': semana ' + pad(ws.getDate()) + '/' + pad(ws.getMonth() + 1) +
-              '–' + pad(we.getDate()) + '/' + pad(we.getMonth() + 1) +
-              ' — ' + info.folgas + ' folga(s), precisa ' + req + ' (' + scale + ')');
-          }
-        });
-      })(weekStart, weekEnd);
-      w.setDate(w.getDate() + 7);
-    }
-    return warnings;
   }
 
   function getConsecutiveSundays(emp, date) {
@@ -544,36 +534,394 @@
     return false;
   }
 
-  function getWarningsForCell(emp, date, code) {
-    var warnings = [];
-    if (!code) return warnings;
+  // ==========================================
+  // MOTOR DE ALERTAS (erro / aviso / info)
+  // ==========================================
+  var TYPE_LABEL = {
+    rest: 'Descanso 11h', run: 'Dias seguidos', sunday: 'Domingo', sundayc: 'Domingos seguidos',
+    essential: 'Turno essencial', week: 'Folgas', balance: 'Saldo feriado', empty: 'Vazio'
+  };
+  var SEV_ORDER = { error: 0, warn: 1, info: 2 };
+
+  function dayPlanned(key) {
+    var d = state.schedule[key];
+    return !!d && Object.keys(d).length > 0;
+  }
+  function fmtShort(key) { var p = key.split('-'); return p[2] + '/' + p[1]; }
+  function getMaxRun() {
+    var v = state.limits && state.limits.maxConsecutiveDays;
+    return v === 0 ? 0 : (v || 6);
+  }
+
+  // Sequência de dias de trabalho seguidos que contém "date": posição do dia na sequência e tamanho total
+  function workRun(emp, date) {
+    var d = new Date(date + 'T00:00:00'), back = 0, fwd = 0, c = new Date(d);
+    while (back < 60) {
+      c.setDate(c.getDate() - 1);
+      if (isWorkShift((state.schedule[keyOf(c)] || {})[emp])) back++; else break;
+    }
+    c = new Date(d);
+    while (fwd < 60) {
+      c.setDate(c.getDate() + 1);
+      if (isWorkShift((state.schedule[keyOf(c)] || {})[emp])) fwd++; else break;
+    }
+    return { pos: back + 1, total: back + fwd + 1 };
+  }
+  function sundayRunPos(emp, date) {
+    var n = 0, d = new Date(date + 'T00:00:00');
+    while (n < 60 && isWorkShift((state.schedule[keyOf(d)] || {})[emp])) { n++; d.setDate(d.getDate() - 7); }
+    return n;
+  }
+
+  function restIssue(emp, k1, c1, k2, c2) {
+    return {
+      sev: 'error', type: 'rest', id: 'rest|' + emp + '|' + k1, date: k2,
+      msg: 'Descanso de 11h não respeitado: ' + c1 + ' (' + fmtShort(k1) + ', termina ' + getShift(c1).end + ') → ' +
+        c2 + ' (' + fmtShort(k2) + '). O próximo turno só pode começar a partir de ' + fmtMin(shiftNextMin(c1)) + '.'
+    };
+  }
+
+  // Problemas de UMA célula (colaborador + dia + turno)
+  function getCellIssues(emp, date, code) {
+    var out = [];
+    if (!code) return out;
     if (code === 'FE' && !isHoliday(date)) {
       var b = getHolidayBalances(date, date, emp);
-      if (b[emp] <= 0) warnings.push('Saldo de folgas de feriado até a data é ' + b[emp] + '. Você está usando folga sem saldo.');
-      return warnings;
+      if (b[emp] <= 0) out.push({ sev: 'warn', type: 'balance', msg: 'Saldo de folgas de feriado até esta data é ' + b[emp] + '. A folga está sendo usada sem saldo.' });
+      return out;
     }
-    if (!isWorkShift(code)) return warnings;
+    if (!isWorkShift(code)) return out;
     var d = new Date(date + 'T00:00:00');
     var prev = new Date(d); prev.setDate(prev.getDate() - 1);
     var next = new Date(d); next.setDate(next.getDate() + 1);
-    var prevCode = (state.schedule[keyOf(prev)] || {})[emp];
-    var nextCode = (state.schedule[keyOf(next)] || {})[emp];
-    if (isWorkShift(prevCode) && !isValidTransition(prevCode, code)) {
-      warnings.push('Após ' + prevCode + ' no dia anterior, o próximo turno só pode começar a partir de ' + fmtMin(shiftNextMin(prevCode)) + '.');
-    }
-    if (isWorkShift(nextCode) && !isValidTransition(code, nextCode)) {
-      var s = getShift(code);
-      warnings.push(code + ' termina às ' + s.end + ', então o dia seguinte só pode ter turno a partir de ' + fmtMin(shiftNextMin(code)) + '.');
-    }
+    var prevKey = keyOf(prev), nextKey = keyOf(next);
+    var prevCode = (state.schedule[prevKey] || {})[emp];
+    var nextCode = (state.schedule[nextKey] || {})[emp];
+    if (isWorkShift(prevCode) && !isValidTransition(prevCode, code)) out.push(restIssue(emp, prevKey, prevCode, date, code));
+    if (isWorkShift(nextCode) && !isValidTransition(code, nextCode)) out.push(restIssue(emp, date, code, nextKey, nextCode));
     if (d.getDay() === 0) {
       var maxW = state.sundayRule.maxWorkers || 2;
       var others = state.employees.filter(function (e) { return e !== emp && isWorkShift((state.schedule[date] || {})[e]); });
-      if (others.length >= maxW) warnings.push('Domingo já tem ' + maxW + ' colaboradores trabalhando. O limite é ' + maxW + '.');
+      if (others.length >= maxW) out.push({ sev: 'error', type: 'sunday', msg: 'Domingo já tem ' + maxW + ' colaboradores trabalhando. O limite é ' + maxW + '.' });
       var cons = getConsecutiveSundays(emp, date);
       var maxC = state.sundayRule.maxConsecutive || 2;
-      if (cons > maxC) warnings.push('Este colaborador vai trabalhar ' + cons + ' domingos consecutivos. O limite configurado é ' + maxC + '.');
+      if (cons > maxC) out.push({ sev: 'warn', type: 'sundayc', msg: emp + ' trabalha ' + cons + ' domingos consecutivos. O limite configurado é ' + maxC + '.' });
     }
-    return warnings;
+    var maxRun = getMaxRun();
+    if (maxRun > 0) {
+      var r = workRun(emp, date);
+      if (r.total > maxRun) out.push({ sev: 'error', type: 'run', msg: emp + ' tem ' + r.total + ' dias seguidos de trabalho (limite ' + maxRun + '). É preciso uma folga.' });
+    }
+    return out;
+  }
+
+  function getWarningsForCell(emp, date, code) {
+    return getCellIssues(emp, date, code).map(function (i) { return i.msg; });
+  }
+
+  // Classe visual + dica de uma célula
+  function cellFlag(emp, key, code) {
+    if (!code) {
+      if (dayPlanned(key) && new Date(key + 'T00:00:00').getDay() !== 0) return { cls: 'has-info', title: 'Sem lançamento neste dia' };
+      return { cls: '', title: '' };
+    }
+    var items = getCellIssues(emp, key, code);
+    if (!items.length) return { cls: '', title: '' };
+    var hasErr = items.some(function (i) { return i.sev === 'error'; });
+    var hasWarn = items.some(function (i) { return i.sev === 'warn'; });
+    return {
+      cls: hasErr ? 'has-error' : (hasWarn ? 'has-warning' : 'has-info'),
+      title: items.map(function (i) { return i.msg; }).join(' • ')
+    };
+  }
+  function cellTitle(emp, key, flagTitle) {
+    var t = [];
+    if (flagTitle) t.push('⚠ ' + flagTitle);
+    cellNotes(emp, key).forEach(function (n) { t.push('📝 ' + n.text); });
+    return escapeHtml(t.join('\n'));
+  }
+
+  // Todos os problemas de um intervalo de datas
+  function computeIssues(startStr, endStr) {
+    var issues = [], seen = {};
+    var d1 = new Date(startStr + 'T00:00:00'), d2 = new Date(endStr + 'T00:00:00');
+    var maxC = state.sundayRule.maxConsecutive || 2;
+    var maxW = state.sundayRule.maxWorkers || 2;
+    var maxRun = getMaxRun();
+
+    function add(i) {
+      var k = i.id || [i.type, i.emp || '', i.date || '', i.msg].join('|');
+      if (seen[k]) return;
+      seen[k] = 1; issues.push(i);
+    }
+    function dayBefore(key, n) { var x = new Date(key + 'T00:00:00'); x.setDate(x.getDate() - n); return keyOf(x); }
+    // emite uma vez por sequência (no 1º dia que passa do limite); se a sequência começou antes do período, emite no 1º dia do período
+    function emitOnce(pos, limit, prevKey) { return pos === limit + 1 || (pos > limit + 1 && prevKey < startStr); }
+
+    for (var cur = new Date(d1); cur <= d2; cur.setDate(cur.getDate() + 1)) {
+      var key = keyOf(cur), dow = cur.getDay();
+      var planned = dayPlanned(key);
+      if (planned) {
+        var miss = checkEssentialShifts(key);
+        if (miss.missing06) add({ sev: 'error', type: 'essential', date: key, msg: 'Ninguém escalado no turno essencial das 06:00.' });
+        if (miss.missing14) add({ sev: 'error', type: 'essential', date: key, msg: 'Ninguém escalado no turno essencial das 14:00.' });
+        if (dow === 0) {
+          var cw = countSundayWorkers(key);
+          if (cw > maxW) add({ sev: 'error', type: 'sunday', date: key, msg: 'Domingo com ' + cw + ' colaboradores trabalhando (limite ' + maxW + ').' });
+        }
+      }
+      state.employees.forEach(function (emp) {
+        var code = (state.schedule[key] || {})[emp];
+        if (!code) {
+          if (planned && dow !== 0) add({ sev: 'info', type: 'empty', emp: emp, date: key, msg: 'Sem lançamento neste dia.' });
+          return;
+        }
+        getCellIssues(emp, key, code).forEach(function (i) {
+          if (i.type === 'sunday') return; // tratado no nível do dia
+          if (i.type === 'sundayc' && !emitOnce(sundayRunPos(emp, key), maxC, dayBefore(key, 7))) return;
+          if (i.type === 'run' && !emitOnce(workRun(emp, key).pos, maxRun, dayBefore(key, 1))) return;
+          add(Object.assign({ emp: emp, date: key }, i));
+        });
+      });
+    }
+
+    function weekCheck(ws) {
+      var we = new Date(ws); we.setDate(ws.getDate() + 6);
+      state.employees.forEach(function (emp) {
+        var scale = getEmployeeScale(emp), req = requiredFolgas(scale);
+        if (req === 0) return;
+        var info = getWeekFolgas(emp, ws);
+        if (!info.planned) return;
+        if (info.folgas + info.empty < req) {
+          add({
+            sev: 'error', type: 'week', emp: emp, date: keyOf(ws),
+            msg: 'Semana ' + pad(ws.getDate()) + '/' + pad(ws.getMonth() + 1) + '–' + pad(we.getDate()) + '/' + pad(we.getMonth() + 1) +
+              ': ' + info.folgas + ' folga(s), precisa de ' + req + ' (escala ' + scale + ').'
+          });
+        }
+      });
+    }
+    for (var w = getWeekStart(d1); w <= d2; w.setDate(w.getDate() + 7)) weekCheck(new Date(w));
+
+    issues.sort(function (a, b) {
+      return (SEV_ORDER[a.sev] - SEV_ORDER[b.sev]) || (a.date < b.date ? -1 : a.date > b.date ? 1 : 0) || (a.emp || '').localeCompare(b.emp || '');
+    });
+    return issues;
+  }
+
+  function issueItemHTML(i) {
+    var act = (i.emp && i.type !== 'week') ? 'sheet' : 'goto';
+    var who = '<strong>' + (i.emp ? escapeHtml(i.emp) : 'Time') + '</strong>';
+    var when = i.type === 'week' ? '' : '<span class="issue-when">' + fmtShort(i.date) + ' · ' + DOW[new Date(i.date + 'T00:00:00').getDay()] + '</span>';
+    return '<button type="button" class="issue-item ' + i.sev + '" data-act="' + act + '" data-emp="' + escapeHtml(i.emp || '') + '" data-date="' + i.date + '">' +
+      '<span class="issue-tag">' + (TYPE_LABEL[i.type] || i.type) + '</span>' +
+      '<span class="issue-main"><span class="issue-who">' + who + when + '</span><span class="issue-msg">' + escapeHtml(i.msg) + '</span></span>' +
+      '<span class="issue-go">›</span></button>';
+  }
+
+  function issuesCardHTML(issues, opts) {
+    opts = opts || {};
+    var errs = issues.filter(function (i) { return i.sev === 'error'; });
+    var warns = issues.filter(function (i) { return i.sev === 'warn'; });
+    var infos = issues.filter(function (i) { return i.sev === 'info'; });
+    var h = '';
+    if (!errs.length && !warns.length) {
+      if (opts.planned) {
+        h += '<div class="warn-card ok"><h3>✓ ' + (opts.okTitle || 'Tudo em dia') + '</h3><div style="font-size:12.5px;color:#166534;line-height:1.7">' +
+          (opts.okText || 'Nenhum problema encontrado nas regras configuradas.') + '</div></div>';
+      }
+    } else {
+      h += '<div class="issues-card"><div class="issues-head"><h3>' + (opts.title || 'Alertas') + '</h3>' +
+        (errs.length ? '<span class="sev-pill error">' + errs.length + (errs.length > 1 ? ' erros' : ' erro') + '</span>' : '') +
+        (warns.length ? '<span class="sev-pill warn">' + warns.length + (warns.length > 1 ? ' avisos' : ' aviso') + '</span>' : '') + '</div>';
+      if (errs.length) h += '<div class="issue-group-title">Precisa corrigir</div><div class="issue-list">' + errs.map(issueItemHTML).join('') + '</div>';
+      if (warns.length) h += '<div class="issue-group-title">Atenção</div><div class="issue-list">' + warns.map(issueItemHTML).join('') + '</div>';
+      h += '</div>';
+    }
+    if (infos.length) {
+      h += '<details class="issue-info"><summary>Células sem lançamento (' + infos.length + ')</summary><div class="issue-list">' + infos.map(issueItemHTML).join('') + '</div></details>';
+    }
+    return h;
+  }
+
+  function updateBadges() {
+    var y = currentDate.getFullYear(), m = currentDate.getMonth();
+    var n = daysInMonth(currentDate);
+    var issues = computeIssues(dateKey(y, m, 1), dateKey(y, m, n));
+    var errs = issues.filter(function (i) { return i.sev === 'error'; }).length;
+    var warns = issues.filter(function (i) { return i.sev === 'warn'; }).length;
+    var b = $('summaryBadge');
+    if (b) {
+      if (errs) { b.textContent = errs; b.className = 'tab-badge error'; }
+      else if (warns) { b.textContent = warns; b.className = 'tab-badge warn'; }
+      else { b.textContent = ''; b.className = 'tab-badge hidden'; }
+    }
+    var nb = $('notesBadge');
+    if (nb) {
+      var prefix = y + '-' + pad(m + 1) + '-', cnt = 0;
+      Object.keys(state.notes || {}).forEach(function (k) { if (k.indexOf(prefix) === 0) cnt += state.notes[k].length; });
+      if (cnt) { nb.textContent = cnt; nb.className = 'tab-badge neutral'; }
+      else { nb.textContent = ''; nb.className = 'tab-badge hidden'; }
+    }
+  }
+
+  // ==========================================
+  // ANOTAÇÕES
+  // ==========================================
+  function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+  function authorName() {
+    if (!currentUser) return '';
+    var meta = currentUser.user_metadata || {};
+    return meta.full_name || (currentUser.email || '').split('@')[0];
+  }
+  function getNotes(date) { return (state.notes && state.notes[date]) || []; }
+  function cellNotes(emp, date) { return getNotes(date).filter(function (n) { return n.emp === emp; }); }
+  function dayNotes(date) { return getNotes(date).filter(function (n) { return !n.emp; }); }
+
+  function addNote(date, emp, text, important) {
+    text = (text || '').trim();
+    if (!text || !date) return false;
+    if (!state.notes) state.notes = {};
+    if (!state.notes[date]) state.notes[date] = [];
+    state.notes[date].push({ id: uid(), emp: emp || '', text: text.slice(0, 600), important: !!important, by: authorName(), ts: new Date().toISOString() });
+    save();
+    return true;
+  }
+  function updateNote(date, id, patch) {
+    var n = getNotes(date).filter(function (x) { return x.id === id; })[0];
+    if (!n) return false;
+    Object.assign(n, patch);
+    save();
+    return true;
+  }
+  function deleteNote(date, id) {
+    var arr = getNotes(date).filter(function (x) { return x.id !== id; });
+    if (arr.length) state.notes[date] = arr; else if (state.notes) delete state.notes[date];
+    save();
+  }
+  function noteCls(emp, key) {
+    var l = cellNotes(emp, key);
+    if (!l.length) return '';
+    return l.some(function (n) { return n.important; }) ? 'has-note has-note-imp' : 'has-note';
+  }
+  function dayNoteMark(key) {
+    var l = dayNotes(key);
+    if (!l.length) return '';
+    var imp = l.some(function (n) { return n.important; });
+    return '<span class="day-note' + (imp ? ' imp' : '') + '" title="' + escapeHtml(l.map(function (n) { return n.text; }).join('\n')) + '">✎</span>';
+  }
+  function noteScopeLabel(n) { return n.emp ? '👤 ' + escapeHtml(n.emp) : '👥 Dia inteiro'; }
+  function noteTime(n) {
+    if (!n.ts) return '';
+    try { return new Date(n.ts).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; }
+  }
+
+  function weekNotesHTML(ws) {
+    var rows = [];
+    for (var i = 0; i < 7; i++) {
+      var d = new Date(ws); d.setDate(ws.getDate() + i);
+      var k = keyOf(d);
+      getNotes(k).forEach(function (n) { rows.push({ k: k, n: n }); });
+    }
+    if (!rows.length) return '';
+    return '<div class="issues-card notes-mini"><div class="issues-head"><h3>Anotações da semana</h3><span class="sev-pill info">' + rows.length + '</span>' +
+      '<button type="button" class="goto-notes">Ver todas</button></div><div class="note-lines">' +
+      rows.map(function (r) {
+        return '<div class="note-line' + (r.n.important ? ' imp' : '') + '"><span class="note-line-date">' + fmtShort(r.k) + '</span>' +
+          '<span class="note-line-scope">' + (r.n.emp ? escapeHtml(r.n.emp) : 'Time') + '</span>' +
+          '<span class="note-line-text">' + (r.n.important ? '★ ' : '') + escapeHtml(r.n.text) + '</span></div>';
+      }).join('') + '</div></div>';
+  }
+
+  var notesFilter = { q: '', mode: 'all' };
+  var editingNote = null;
+
+  function renderNotes() {
+    var y = currentDate.getFullYear(), m = currentDate.getMonth();
+    var now = new Date();
+    var defDate = (now.getFullYear() === y && now.getMonth() === m) ? keyOf(now) : dateKey(y, m, 1);
+    var scopeOpts = '<option value="day">Dia inteiro (time)</option>' +
+      state.employees.map(function (e) { return '<option value="emp:' + escapeHtml(e) + '">' + escapeHtml(e) + '</option>'; }).join('');
+    var chips = [['all', 'Todas'], ['imp', '★ Importantes'], ['day', 'Do time']].concat(state.employees.map(function (e) { return ['emp:' + e, e]; }));
+    var chipsHtml = chips.map(function (c) {
+      return '<button type="button" class="note-chip' + (notesFilter.mode === c[0] ? ' active' : '') + '" data-nf="' + escapeHtml(c[0]) + '">' + escapeHtml(c[1]) + '</button>';
+    }).join('');
+    var h = '<div class="notes-view">' +
+      '<div class="notes-card"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></div><h3 class="section-title">Nova anotação</h3></div>' +
+      '<div class="note-form-grid">' +
+        '<div><label class="png-label" for="nvDate">Data</label><input type="date" id="nvDate" class="png-date-input" value="' + defDate + '"></div>' +
+        '<div><label class="png-label" for="nvScope">Sobre</label><select id="nvScope" class="note-select">' + scopeOpts + '</select></div>' +
+      '</div>' +
+      '<textarea id="nvText" class="note-textarea" rows="3" maxlength="600" placeholder="Ex.: Lucas pediu troca de turno na sexta; confirmar com o gerente."></textarea>' +
+      '<div class="note-composer-row"><label class="note-imp"><input type="checkbox" id="nvImp"> Importante</label><button type="button" class="note-add" id="nvAdd">Adicionar</button></div></div>' +
+      '<div class="notes-card"><div class="notes-toolbar"><div class="note-chips">' + chipsHtml + '</div>' +
+      '<input type="search" id="nvSearch" class="note-search" placeholder="Buscar nas anotações…" value="' + escapeHtml(notesFilter.q) + '"></div>' +
+      '<div id="notesList"></div></div></div>';
+    viewNotes.innerHTML = h;
+    renderNotesList();
+  }
+
+  function renderNotesList() {
+    var el = $('notesList');
+    if (!el) return;
+    var y = currentDate.getFullYear(), m = currentDate.getMonth();
+    var prefix = y + '-' + pad(m + 1) + '-';
+    var q = (notesFilter.q || '').trim().toLowerCase();
+    var mode = notesFilter.mode;
+    var rows = [];
+    Object.keys(state.notes || {}).forEach(function (date) {
+      if (date.indexOf(prefix) !== 0) return;
+      state.notes[date].forEach(function (n) {
+        if (mode === 'imp' && !n.important) return;
+        if (mode === 'day' && n.emp) return;
+        if (mode.indexOf('emp:') === 0 && n.emp !== mode.slice(4)) return;
+        if (q && (n.text + ' ' + (n.emp || '') + ' ' + (n.by || '')).toLowerCase().indexOf(q) === -1) return;
+        rows.push({ date: date, n: n });
+      });
+    });
+    rows.sort(function (a, b) {
+      if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+      return (a.n.ts || '') < (b.n.ts || '') ? -1 : 1;
+    });
+    if (!rows.length) {
+      el.innerHTML = '<div class="notes-empty">' + (q || mode !== 'all' ? 'Nenhuma anotação encontrada com esse filtro.' : 'Nenhuma anotação neste mês. Use o formulário acima ou toque em uma célula da escala.') + '</div>';
+      return;
+    }
+    var h = '', lastDate = '';
+    rows.forEach(function (r) {
+      if (r.date !== lastDate) {
+        lastDate = r.date;
+        h += '<button type="button" class="note-date" data-goto-date="' + r.date + '">' + fmtLong(new Date(r.date + 'T00:00:00')) + '<span>ver na escala ›</span></button>';
+      }
+      var n = r.n;
+      var editing = editingNote && editingNote.id === n.id && editingNote.date === r.date;
+      h += '<div class="note-item' + (n.important ? ' imp' : '') + '" data-date="' + r.date + '" data-id="' + n.id + '">' +
+        '<div class="note-top"><span class="note-scope">' + noteScopeLabel(n) + '</span><span class="note-meta">' + (n.by ? escapeHtml(n.by) + ' · ' : '') + noteTime(n) + (n.edited ? ' · editada' : '') + '</span></div>';
+      if (editing) {
+        h += '<textarea id="editNoteText" class="note-textarea" rows="3" maxlength="600">' + escapeHtml(n.text) + '</textarea>' +
+          '<div class="note-actions"><button type="button" data-na="save" class="na-primary">Salvar</button><button type="button" data-na="cancel">Cancelar</button></div>';
+      } else {
+        h += '<div class="note-text">' + escapeHtml(n.text) + '</div>' +
+          '<div class="note-actions"><button type="button" data-na="imp" class="' + (n.important ? 'na-on' : '') + '">' + (n.important ? '★ Importante' : '☆ Marcar importante') + '</button>' +
+          '<button type="button" data-na="edit">Editar</button><button type="button" data-na="del" class="na-danger">Excluir</button></div>';
+      }
+      h += '</div>';
+    });
+    el.innerHTML = h;
+    if (editingNote) { var ta = $('editNoteText'); if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); } }
+  }
+
+  function renderSheetNotes() {
+    var list = $('sheetNotesList');
+    if (!list || !sheetCtx) return;
+    var emp = sheetCtx.emp, date = sheetCtx.date;
+    var items = getNotes(date).filter(function (n) { return n.emp === emp || !n.emp; });
+    list.innerHTML = items.length ? items.map(function (n) {
+      return '<div class="note-item mini' + (n.important ? ' imp' : '') + '"><div class="note-top"><span class="note-scope">' + noteScopeLabel(n) + '</span>' +
+        '<span class="note-meta">' + (n.by ? escapeHtml(n.by) + ' · ' : '') + noteTime(n) + '</span>' +
+        '<button type="button" class="note-x" data-sheet-note-del="' + n.id + '" aria-label="Excluir anotação">×</button></div>' +
+        '<div class="note-text">' + (n.important ? '★ ' : '') + escapeHtml(n.text) + '</div></div>';
+    }).join('') : '<div class="notes-empty small">Nenhuma anotação para este dia.</div>';
   }
 
   function countSundayWorkers(date) {
@@ -582,7 +930,7 @@
 
   function checkEssentialShifts(key) {
     var d = new Date(key + 'T00:00:00');
-    if (d.getDay() === 0) return { missing06: false, missing14: false };
+    if (d.getDay() === 0 || !dayPlanned(key)) return { missing06: false, missing14: false };
     var has06 = false, has14 = false;
     state.employees.forEach(function (emp) {
       var code = (state.schedule[key] || {})[emp];
@@ -641,7 +989,7 @@
         badge = '<span class="sun-count ' + (nW <= maxW ? 'ok' : 'bad') + '">' + nW + '/' + maxW + '</span>';
       }
       var alertIcon = (miss.missing06 || miss.missing14) ? '<span style="color:var(--danger);font-size:11px;display:block;line-height:1;margin-top:2px;" title="Falta turno essencial">⚠</span>' : '';
-      h += '<div class="wk-day-head ' + clsH + '" style="' + headStyle + '"><span class="wk-dow" style="' + (dowH === 0 ? 'color:inherit;opacity:.9' : '') + '">' + DOW[dowH] + '</span><span class="wk-num">' + dH.getDate() + '</span>' + badge + alertIcon + '</div>';
+      h += '<div class="wk-day-head ' + clsH + '" style="' + headStyle + '"><span class="wk-dow" style="' + (dowH === 0 ? 'color:inherit;opacity:.9' : '') + '">' + DOW[dowH] + '</span><span class="wk-num">' + dH.getDate() + '</span>' + badge + alertIcon + dayNoteMark(keyH) + '</div>';
     }
     for (var k = 0; k < state.employees.length; k++) {
       var emp = state.employees[k];
@@ -665,34 +1013,23 @@
         var inner = '';
         if (s) inner += '<span class="cell-txt">' + s.label + '</span>';
         if (printTxt) inner += '<span class="cell-print">' + printTxt + '</span>';
-        var w = code && getWarningsForCell(emp, key, code).length > 0;
+        var fl = cellFlag(emp, key, code);
         var holidayClass = isHoliday(key) ? 'holiday' : '';
-        h += '<button class="wk-cell ' + holidayClass + ' ' + (w ? 'has-warning' : '') + '" data-emp="' + emp + '" data-date="' + key + '" data-print="' + printTxt + '" style="' + style + '">' + inner + '</button>';
+        h += '<button class="wk-cell ' + holidayClass + ' ' + fl.cls + ' ' + noteCls(emp, key) + '" data-emp="' + escapeHtml(emp) + '" data-date="' + key + '" data-print="' + printTxt + '" title="' + cellTitle(emp, key, fl.title) + '" style="' + style + '">' + inner + '</button>';
       }
     }
     h += '</div>';
 
     var weekStart = getWeekStart(currentDate);
-    var anyPlanned = false;
-    var folgaIssues = [];
-    var folgaOkList = [];
-    state.employees.forEach(function (emp) {
-      var scale = getEmployeeScale(emp);
-      var req = requiredFolgas(scale);
-      var info = getWeekFolgas(emp, weekStart);
-      if (info.planned) anyPlanned = true;
-      if (req > 0 && info.planned) {
-        if (info.folgas + info.empty < req) folgaIssues.push({ emp: emp, folgas: info.folgas, req: req, scale: scale });
-        else if (info.folgas >= req) folgaOkList.push(emp + ': ' + info.folgas + '/' + req);
-      }
-    });
-    if (folgaIssues.length) {
-      h += '<div class="week-alerts"><div class="warn-card"><h3>⚠ Folgas da Semana (Seg–Dom)</h3><ul>' +
-        folgaIssues.map(function (w) { return '<li><strong>' + w.emp + '</strong>: ' + w.folgas + ' folga(s) — precisa ' + w.req + ' (escala ' + w.scale + ')</li>'; }).join('') +
-        '</ul></div></div>';
-    } else if (anyPlanned && folgaOkList.length) {
-      h += '<div class="week-alerts"><div class="warn-card ok"><h3>✓ Folgas em dia (Seg–Dom)</h3><div style="font-size:12.5px;color:#166534;line-height:1.7">' + folgaOkList.join(' · ') + '</div></div></div>';
+    var weekEndD = new Date(weekStart); weekEndD.setDate(weekStart.getDate() + 6);
+    var wPlanned = false;
+    for (var pi = 0; pi < 7; pi++) {
+      var pd = new Date(weekStart); pd.setDate(weekStart.getDate() + pi);
+      if (dayPlanned(keyOf(pd))) { wPlanned = true; break; }
     }
+    var wHtml = issuesCardHTML(computeIssues(keyOf(weekStart), keyOf(weekEndD)), { title: 'Alertas da semana', planned: wPlanned, okTitle: 'Semana em dia' });
+    var wNotes = weekNotesHTML(weekStart);
+    if (wHtml || wNotes) h += '<div class="week-alerts">' + wHtml + wNotes + '</div>';
     viewWeek.innerHTML = h;
   }
 
@@ -716,7 +1053,7 @@
         headStyle = 'background:' + sun.color + '; color:' + sun.text + ';';
       }
       var alertIcon = (miss.missing06 || miss.missing14) ? '<span style="color:var(--danger);font-size:11px;display:block;line-height:1;margin-top:2px;" title="Falta turno essencial">⚠</span>' : '';
-      h += '<th class="' + clsH + '" style="' + headStyle + '"><span class="dnum">' + d + '</span><span class="dow" style="' + (dowH === 0 ? 'color:inherit;opacity:.9' : '') + '">' + DOW[dowH] + '</span>' + alertIcon + '</th>';
+      h += '<th class="' + clsH + '" style="' + headStyle + '"><span class="dnum">' + d + '</span><span class="dow" style="' + (dowH === 0 ? 'color:inherit;opacity:.9' : '') + '">' + DOW[dowH] + '</span>' + alertIcon + dayNoteMark(keyH) + '</th>';
     }
     h += '</tr></thead><tbody>';
     for (var i = 0; i < state.employees.length; i++) {
@@ -742,8 +1079,8 @@
         var inner = '';
         if (s) inner += '<span class="cell-txt">' + s.label + '</span>';
         if (printTxt) inner += '<span class="cell-print">' + printTxt + '</span>';
-        var w = code && getWarningsForCell(emp, key, code).length > 0;
-        h += '<td class="' + cls + ' ' + (w ? 'has-warning' : '') + '" data-emp="' + emp + '" data-date="' + key + '" data-print="' + printTxt + '" style="' + style + '">' + inner + '</td>';
+        var fl = cellFlag(emp, key, code);
+        h += '<td class="' + cls + ' ' + fl.cls + ' ' + noteCls(emp, key) + '" data-emp="' + escapeHtml(emp) + '" data-date="' + key + '" data-print="' + printTxt + '" title="' + cellTitle(emp, key, fl.title) + '" style="' + style + '">' + inner + '</td>';
       }
       h += '</tr>';
     }
@@ -754,20 +1091,10 @@
     });
     h += '</div>';
 
-    var monthWarnings = getWeekWarningsForMonth(y, m);
-    if (monthWarnings.length) {
-      h += '<div class="week-alerts"><div class="warn-card"><h3>⚠ Folgas Semanais (Seg–Dom)</h3><ul>' +
-        monthWarnings.map(function (w) { return '<li>' + w + '</li>'; }).join('') + '</ul></div></div>';
-    } else {
-      var hasAnyPlanned = false;
-      for (var dd = 1; dd <= n; dd++) {
-        var kk = dateKey(y, m, dd);
-        if (state.schedule[kk] && Object.keys(state.schedule[kk]).length) { hasAnyPlanned = true; break; }
-      }
-      if (hasAnyPlanned) {
-        h += '<div class="week-alerts"><div class="warn-card ok"><h3>✓ Folgas Semanais em dia (Seg–Dom)</h3><div style="font-size:12.5px;color:#166534;line-height:1.7">Todas as semanas do mês respeitam a escala configurada.</div></div></div>';
-      }
-    }
+    var mPlanned = false;
+    for (var dd = 1; dd <= n; dd++) { if (dayPlanned(dateKey(y, m, dd))) { mPlanned = true; break; } }
+    var mHtml = issuesCardHTML(computeIssues(dateKey(y, m, 1), dateKey(y, m, n)), { title: 'Alertas do mês', planned: mPlanned, okTitle: 'Mês em dia' });
+    if (mHtml) h += '<div class="week-alerts">' + mHtml + '</div>';
 
     viewMonth.innerHTML = h;
     requestAnimationFrame(function () {
@@ -781,7 +1108,7 @@
   // ==========================================
   // RENDER DE INTERVALO (usado na exportação e impressão)
   // ==========================================
-  function renderRange(startStr, endStr) {
+  function renderRange(startStr, endStr, opts) {
     var container = viewMonth;
     if (!state.employees || state.employees.length === 0) {
       container.innerHTML = emptyStateHTML('Nenhum colaborador cadastrado.');
@@ -854,6 +1181,16 @@
     });
     h += '</div>';
 
+    if (opts && opts.notes) {
+      var nrows = [];
+      days.forEach(function (dd) { var k = keyOf(dd); getNotes(k).forEach(function (n) { nrows.push({ k: k, n: n }); }); });
+      if (nrows.length) {
+        h += '<div class="range-notes"><div class="range-notes-title">Anotações</div><ul>' +
+          nrows.map(function (r) {
+            return '<li><strong>' + fmtShort(r.k) + '</strong> · ' + (r.n.emp ? escapeHtml(r.n.emp) : 'Time') + ': ' + (r.n.important ? '★ ' : '') + escapeHtml(r.n.text) + '</li>';
+          }).join('') + '</ul></div>';
+      }
+    }
     container.innerHTML = h;
   }
 
@@ -901,48 +1238,13 @@
         '</div>' + (chipsHtml ? '<div class="bd">' + chipsHtml + '</div>' : '') + '</div>';
     }
 
-    var warningList = [];
-    for (var d = 1; d <= n; d++) {
-      var key = dateKey(y, m, d);
-      var dt = new Date(y, m, d);
-      if (dt.getDay() === 0) {
-        var c = countSundayWorkers(key);
-        var maxW = state.sundayRule.maxWorkers || 2;
-        if (c > maxW) warningList.push('Domingo ' + pad(d) + '/' + pad(m + 1) + ': ' + c + ' trabalhando (limite ' + maxW + ').');
-        state.employees.forEach(function (emp) {
-          var code = (state.schedule[key] || {})[emp];
-          if (isWorkShift(code)) {
-            var cons = getConsecutiveSundays(emp, key);
-            var maxC = state.sundayRule.maxConsecutive || 2;
-            if (cons > maxC) {
-              var prev = new Date(dt); prev.setDate(prev.getDate() - 7);
-              var prevCode = (state.schedule[keyOf(prev)] || {})[emp];
-              if (!isWorkShift(prevCode)) warningList.push(emp + ': ' + cons + ' domingos consecutivos a partir de ' + pad(d) + '/' + pad(m + 1) + ' (limite ' + maxC + ').');
-            }
-          }
-        });
-      }
-      var miss = checkEssentialShifts(key);
-      if (miss.missing06) warningList.push('Dia ' + pad(d) + '/' + pad(m + 1) + ': Ninguém escalado no horário essencial das 06:00.');
-      if (miss.missing14) warningList.push('Dia ' + pad(d) + '/' + pad(m + 1) + ': Ninguém escalado no horário essencial das 14:00.');
-    }
-    state.employees.forEach(function (emp) {
-      for (var d2 = 1; d2 < n; d2++) {
-        var k1 = dateKey(y, m, d2), k2 = dateKey(y, m, d2 + 1);
-        var c1 = (state.schedule[k1] || {})[emp], c2 = (state.schedule[k2] || {})[emp];
-        if (isWorkShift(c1) && isWorkShift(c2) && !isValidTransition(c1, c2)) {
-          warningList.push(emp + ': ' + pad(d2) + '/' + pad(m + 1) + ' ' + c1 + ' → ' + pad(d2 + 1) + '/' + pad(m + 1) + ' ' + c2 + ' — descanso insuficiente (mín. 11h).');
-        }
-      }
+    var sPlanned = false;
+    for (var sd = 1; sd <= n; sd++) { if (dayPlanned(dateKey(y, m, sd))) { sPlanned = true; break; } }
+    var sCard = issuesCardHTML(computeIssues(dateKey(y, m, 1), dateKey(y, m, n)), {
+      title: 'Verificações do mês', planned: sPlanned, okTitle: 'Tudo certo!',
+      okText: 'Descanso de 11h, domingos, turnos essenciais, dias seguidos e folgas semanais estão dentro das regras.'
     });
-    getWeekWarningsForMonth(y, m).forEach(function (w) { warningList.push(w); });
-
-    if (warningList.length) {
-      var listHtml = warningList.map(function (w) { return '<li>' + w + '</li>'; }).join('');
-      h += '<div class="warn-card"><h3>⚠ Verificações Pendentes</h3><ul>' + listHtml + '</ul></div>';
-    } else {
-      h += '<div class="warn-card ok"><h3>✓ Tudo Certo!</h3><ul><li>Descanso de 11h respeitado</li><li>Regras de domingo (limite e consecutivos) ok</li><li>Turnos essenciais (06h e 14h) preenchidos</li><li>Folgas semanais conforme escala (6x1 / 5x2)</li></ul></div>';
-    }
+    if (sCard) h += sCard;
     h += '</div>';
     viewSummary.innerHTML = h;
   }
@@ -965,6 +1267,8 @@
     h += '<div class="settings-section full">' +
       '<div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></div><h3 class="section-title">Geral</h3></div>' +
       '<div class="settings-row"><label>Nome do time</label><input type="text" class="team-name-input" id="teamNameInput" value="' + state.teamName.replace(/"/g, '&quot;') + '" style="max-width:280px;flex:1"></div>' +
+      '<div class="settings-row"><label>Tema (neste dispositivo)</label><select id="themeSelect">' +
+        [['auto', 'Automático (sistema)'], ['light', 'Claro'], ['dark', 'Escuro']].map(function (o) { return '<option value="' + o[0] + '" ' + (getThemePref() === o[0] ? 'selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select></div>' +
       '<div class="settings-row"><label>Sincronização</label><span id="storageStatus" style="font-size:12px;font-weight:700;padding:6px 12px;border-radius:20px;background:#f1f5f9;color:#475569">—</span></div>' +
       '<div class="settings-row"><label>Forçar envio à nuvem</label><button class="danger-btn neutral" id="forceSyncBtn">Sincronizar agora</button></div></div>';
 
@@ -1004,6 +1308,7 @@
     h += '<div class="settings-section full"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg></div><h3 class="section-title">Regras de Escala</h3></div>' +
       '<div class="settings-row"><label>Máximo de colaboradores no domingo</label><select class="sun-rule-config" data-key="maxWorkers">' + [1, 2, 3, 4, 5].map(function (v) { return '<option value="' + v + '" ' + (rule.maxWorkers == v ? 'selected' : '') + '>' + v + '</option>'; }).join('') + '</select></div>' +
       '<div class="settings-row"><label>Máximo de domingos consecutivos</label><select class="sun-rule-config" data-key="maxConsecutive">' + [1, 2, 3, 4].map(function (v) { return '<option value="' + v + '" ' + (rule.maxConsecutive == v ? 'selected' : '') + '>' + v + ' Domingo(s)</option>'; }).join('') + '</select></div>' +
+      '<div class="settings-row"><label>Máximo de dias seguidos de trabalho</label><select class="limit-config" data-key="maxConsecutiveDays">' + [0, 5, 6, 7].map(function (v) { return '<option value="' + v + '" ' + (getMaxRun() === v ? 'selected' : '') + '>' + (v === 0 ? 'Não verificar' : v + ' dias') + '</option>'; }).join('') + '</select></div>' +
       '<div class="settings-row"><label>Cor do cabeçalho de Domingo</label><input type="color" class="color-picker sunday-color" value="' + (state.colors.SUNDAY ? state.colors.SUNDAY.color : '#ef4444') + '"></div>' +
       '<div class="sub-section-title">Escala semanal por colaborador</div>';
     state.employees.forEach(function (emp) {
@@ -1047,7 +1352,9 @@
       case 'month': renderMonth(); break;
       case 'summary': renderSummary(); break;
       case 'settings': renderSettings(); break;
+      case 'notes': renderNotes(); break;
     }
+    updateBadges();
   }
 
   function switchToView(view) {
@@ -1094,6 +1401,9 @@
       eventShiftGrid.innerHTML = eventIds.map(function (id) { return buildShiftBtn(id, cur, emp, dateStr); }).join('');
     } else { eventShiftGrid.style.display = 'none'; eventSectionTitle.style.display = 'none'; }
 
+    $('noteScope').innerHTML = '<option value="emp">Só ' + escapeHtml(emp) + '</option><option value="day">Dia inteiro (time)</option>';
+    $('noteInput').value = ''; $('noteImportant').checked = false;
+    renderSheetNotes();
     sheet.classList.add('open'); sheetBackdrop.classList.add('open');
   }
 
@@ -1163,7 +1473,7 @@
       lines.push(r.join(','));
     });
     lines.push('', '#CONFIG_BEGIN');
-    lines.push(JSON.stringify({ teamName: state.teamName, employees: state.employees, shifts: state.shifts, defaultShift: state.defaultShift, employeeScale: state.employeeScale, holidays: state.holidays, colors: state.colors, sundayRule: state.sundayRule }));
+    lines.push(JSON.stringify({ teamName: state.teamName, employees: state.employees, shifts: state.shifts, defaultShift: state.defaultShift, employeeScale: state.employeeScale, holidays: state.holidays, colors: state.colors, sundayRule: state.sundayRule, limits: state.limits, notes: state.notes }));
     lines.push('#CONFIG_END');
     return lines.join('\n');
   }
@@ -1193,6 +1503,8 @@
           if (parsed.holidays) state.holidays = parsed.holidays;
           if (parsed.colors) state.colors = parsed.colors;
           if (parsed.sundayRule) state.sundayRule = parsed.sundayRule;
+          if (parsed.limits) state.limits = parsed.limits;
+          if (parsed.notes) state.notes = parsed.notes;
         } catch (err) { console.warn(err); }
         text = text.substring(0, cs);
       }
@@ -1247,6 +1559,9 @@
     });
     if (state.defaultShift[oldName] !== undefined) { state.defaultShift[newName] = state.defaultShift[oldName]; delete state.defaultShift[oldName]; }
     if (state.employeeScale && state.employeeScale[oldName] !== undefined) { state.employeeScale[newName] = state.employeeScale[oldName]; delete state.employeeScale[oldName]; }
+    Object.keys(state.notes || {}).forEach(function (date) {
+      state.notes[date].forEach(function (n) { if (n.emp === oldName) n.emp = newName; });
+    });
     save(); return true;
   }
 
@@ -1259,6 +1574,10 @@
           delete state.schedule[date][name];
           if (Object.keys(state.schedule[date]).length === 0) delete state.schedule[date];
         }
+      });
+      Object.keys(state.notes || {}).forEach(function (date) {
+        state.notes[date] = state.notes[date].filter(function (n) { return n.emp !== name; });
+        if (!state.notes[date].length) delete state.notes[date];
       });
       delete state.defaultShift[name];
       if (state.employeeScale) delete state.employeeScale[name];
@@ -1370,13 +1689,13 @@
            ' ' + d2.getFullYear();
   }
 
-  function doPrintRange(startStr, endStr) {
+  function doPrintRange(startStr, endStr, withNotes) {
     var originalView = activeView;
 
     // Gera a grade do intervalo no container do mês
     _exporting = true;
     try {
-      renderRange(startStr, endStr);
+      renderRange(startStr, endStr, { notes: withNotes });
     } finally {
       _exporting = false;
     }
@@ -1400,11 +1719,12 @@
 
     var restore = function () {
       window.removeEventListener('afterprint', restore);
+      applyTheme();
       switchToView(originalView);
     };
     window.addEventListener('afterprint', restore);
 
-    setTimeout(function () { window.print(); }, 100);
+    setTimeout(function () { document.documentElement.removeAttribute('data-theme'); window.print(); }, 100);
   }
 
   function requestPrint() {
@@ -1435,6 +1755,7 @@
           '<button type="button" class="png-preset" data-print-preset="month">Mês atual</button>' +
           '<button type="button" class="png-preset" data-print-preset="next7">Próximos 7 dias</button>' +
         '</div>' +
+        '<label class="note-imp" style="display:flex;margin-bottom:12px"><input type="checkbox" id="printNotes" checked> Incluir anotações do período</label>' +
         '<div style="padding:8px 10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:7px;font-size:11px;color:#1e3a8a;line-height:1.45">' +
           '💡 <strong>Impressão</strong> gera a grade da escala em papel. Para uma imagem (WhatsApp), use o botão <strong>Exportar PNG</strong>.' +
         '</div>' +
@@ -1453,7 +1774,9 @@
         var d2 = new Date(end + 'T00:00:00');
         var days = Math.round((d2 - d1) / 86400000) + 1;
         if (days > 62) { toast('Máximo de 62 dias por impressão.'); return false; }
-        setTimeout(function () { doPrintRange(start, end); }, 80);
+        var pn = document.getElementById('printNotes');
+        var printWithNotes = pn ? pn.checked : true;
+        setTimeout(function () { doPrintRange(start, end, printWithNotes); }, 80);
         return true;
       }
     });
@@ -1501,7 +1824,7 @@
   }
 
   // ==========================================
-  // EXPORTAÇÃO DE IMAGEM (PNG / JPG) POR INTERVALO
+  // EXPORTAÇÃO DE IMAGEM (PNG) POR INTERVALO
   // ==========================================
   function canShareFiles() {
     try {
@@ -1522,38 +1845,12 @@
       toast('Nenhum colaborador para exportar.');
       return;
     }
+    if (_exportBusy) { toast('Aguarde, a imagem anterior ainda está sendo gerada.'); return; }
 
     var def = getDefaultRangeForView();
-    var shareSupported = canShareFiles();
-
-    var actionHtml;
-    if (shareSupported) {
-      actionHtml =
-        '<div style="margin-bottom:10px">' +
-          '<label class="png-label">Ação</label>' +
-          '<div class="png-format-group">' +
-            '<label class="png-format-opt">' +
-              '<input type="radio" name="pngAction" value="share" checked>' +
-              '<span><strong>Compartilhar</strong><br><small>WhatsApp (sem compressão)</small></span>' +
-            '</label>' +
-            '<label class="png-format-opt">' +
-              '<input type="radio" name="pngAction" value="download">' +
-              '<span><strong>Baixar</strong><br><small>Salvar no dispositivo</small></span>' +
-            '</label>' +
-          '</div>' +
-          '<p style="font-size:10.5px;color:#166534;background:#f0fdf4;border:1px solid #bbf7d0;padding:7px 9px;border-radius:6px;margin:8px 0 0;line-height:1.4">' +
-            '💡 Compartilhando direto, o WhatsApp recebe o arquivo original <strong>sem recomprimir</strong>. Se preferir baixar, envie no WhatsApp como <strong>Documento</strong> (não como Foto).' +
-          '</p>' +
-        '</div>';
-    } else {
-      actionHtml =
-        '<div style="margin-bottom:10px;padding:8px 10px;background:#fffbeb;border:1px solid #fde68a;border-radius:7px;font-size:11px;color:#78350f;line-height:1.45">' +
-          '💡 <strong>Dica WhatsApp:</strong> ao enviar, toque em <strong>+ → Documento</strong> (não em "Foto") para evitar a compressão que deixa a imagem embaçada.' +
-        '</div>';
-    }
 
     showDialog({
-      title: 'Exportar imagem',
+      title: 'Exportar imagem (PNG)',
       body:
         '<div style="margin-bottom:12px">' +
           '<label class="png-label">Período</label>' +
@@ -1573,29 +1870,15 @@
           '<button type="button" class="png-preset" data-preset="month">Mês</button>' +
           '<button type="button" class="png-preset" data-preset="next7">Próx. 7 dias</button>' +
         '</div>' +
-        '<div style="margin-bottom:10px">' +
-          '<label class="png-label">Formato</label>' +
-          '<div class="png-format-group">' +
-            '<label class="png-format-opt">' +
-              '<input type="radio" name="pngFormat" value="png" checked>' +
-              '<span><strong>PNG</strong><br><small>Melhor qualidade</small></span>' +
-            '</label>' +
-            '<label class="png-format-opt">' +
-              '<input type="radio" name="pngFormat" value="jpg">' +
-              '<span><strong>JPG</strong><br><small>Arquivo menor</small></span>' +
-            '</label>' +
-          '</div>' +
-        '</div>' +
-        actionHtml +
-        '<div id="pngRangeHint" style="font-size:11.5px;color:var(--muted);margin-top:6px;text-align:center;min-height:16px"></div>',
-      confirmText: 'Exportar',
+        '<label class="note-imp" style="display:flex;margin-bottom:10px"><input type="checkbox" id="pngNotes" checked> Incluir anotações do período</label>' +
+        '<div class="dialog-tip">A imagem é gerada em <strong>PNG</strong>, com qualidade máxima e fundo branco (independente do tema). Depois de gerar, você vê a prévia e escolhe entre compartilhar ou baixar.</div>' +
+        '<div id="pngRangeHint" style="font-size:11.5px;color:var(--muted);margin-top:8px;text-align:center;min-height:16px"></div>',
+      confirmText: 'Gerar imagem',
       cancelText: 'Cancelar',
       isDanger: false,
       onConfirm: function () {
         var startEl = document.getElementById('pngStartDate');
         var endEl = document.getElementById('pngEndDate');
-        var formatEl = document.querySelector('input[name="pngFormat"]:checked');
-        var actionEl = document.querySelector('input[name="pngAction"]:checked');
         if (!startEl || !endEl) return false;
         var start = startEl.value, end = endEl.value;
         if (!start || !end) { toast('Preencha as duas datas.'); return false; }
@@ -1604,9 +1887,9 @@
         var d2 = new Date(end + 'T00:00:00');
         var days = Math.round((d2 - d1) / 86400000) + 1;
         if (days > 62) { toast('Máximo de 62 dias por exportação.'); return false; }
-        var format = formatEl ? formatEl.value : 'png';
-        var action = actionEl ? actionEl.value : 'download';
-        setTimeout(function () { exportImageRange(start, end, format, action); }, 60);
+        var pnn = document.getElementById('pngNotes');
+        var withNotes = pnn ? pnn.checked : true;
+        setTimeout(function () { exportImageRange(start, end, withNotes); }, 60);
         return true;
       }
     });
@@ -1662,10 +1945,57 @@
     setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
   }
 
-  async function exportImageRange(startStr, endStr, format, action) {
-    format = format === 'jpg' ? 'jpg' : 'png';
-    action = action === 'share' ? 'share' : 'download';
+  var _exportBusy = false;
 
+  // Tela de resultado: prévia + compartilhar/baixar (o clique cria um gesto novo, exigido pelo navegador para compartilhar)
+  function showImageResult(blob, filename, periodStr, w, h) {
+    var url = URL.createObjectURL(blob);
+    var canShare = canShareFiles();
+    var kb = Math.round(blob.size / 1024);
+    var sizeLabel = kb > 1024 ? (kb / 1024).toFixed(1) + ' MB' : kb + ' KB';
+    showDialog({
+      title: 'Imagem pronta',
+      body:
+        '<div class="png-preview"><img src="' + url + '" alt="Pré-visualização da escala"></div>' +
+        '<div class="png-meta">' + escapeHtml(periodStr) + ' · ' + w + '×' + h + ' px · ' + sizeLabel + '</div>' +
+        (canShare
+          ? '<button type="button" class="png-preset" id="pngDownloadBtn" style="width:100%;margin-top:10px;padding:10px">Baixar PNG</button>' +
+            '<div class="dialog-tip">Compartilhando direto, o WhatsApp recebe o arquivo original, sem recompressão.</div>'
+          : '<div class="dialog-tip"><strong>Dica WhatsApp:</strong> ao enviar o arquivo baixado, toque em <strong>+ → Documento</strong> (não em "Foto") para evitar a compressão.</div>'),
+      confirmText: canShare ? 'Compartilhar' : 'Baixar PNG',
+      cancelText: 'Fechar',
+      isDanger: false,
+      onOpen: function () {
+        var b = document.getElementById('pngDownloadBtn');
+        if (b) b.addEventListener('click', function () {
+          downloadBlob(blob, filename);
+          toast('✓ Imagem baixada');
+          $('dialogCancel').click();
+        });
+      },
+      onCancel: function () { setTimeout(function () { URL.revokeObjectURL(url); }, 500); },
+      onConfirm: function () {
+        if (canShare) {
+          var file = new File([blob], filename, { type: 'image/png' });
+          navigator.share({ files: [file], title: 'Escala ' + state.teamName, text: 'Escala ' + state.teamName + ' (' + periodStr + ')' })
+            .then(function () { toast('✓ Compartilhado com qualidade original'); })
+            .catch(function (err) {
+              if (err && err.name === 'AbortError') return;
+              console.warn('[Share] Falhou, usando download:', err);
+              downloadBlob(blob, filename);
+              toast('✓ Imagem baixada');
+            });
+        } else {
+          downloadBlob(blob, filename);
+          toast('✓ Imagem baixada');
+        }
+        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+        return true;
+      }
+    });
+  }
+
+  async function exportImageRange(startStr, endStr, withNotes) {
     if (typeof html2canvas === 'undefined') {
       toast('Biblioteca de exportação não disponível.');
       return;
@@ -1678,13 +2008,13 @@
       toast('Intervalo inválido.');
       return;
     }
-
+    if (_exportBusy) return;
+    _exportBusy = true;
     toast('Gerando imagem...');
 
     var d1 = new Date(startStr + 'T00:00:00');
     var d2 = new Date(endStr + 'T00:00:00');
     var dayCount = Math.round((d2 - d1) / 86400000) + 1;
-
     var periodStr = formatRangeLabel(startStr, endStr);
     var width = Math.max(1000, 130 + dayCount * 60 + 60);
 
@@ -1708,76 +2038,55 @@
     _exporting = true;
 
     try {
-      viewMonth = content;
-      renderRange(startStr, endStr);
-    } finally {
-      viewMonth = originalMonth;
-    }
-
-    try {
-      if (document.fonts && document.fonts.ready) {
-        await document.fonts.ready;
+      try {
+        viewMonth = content;
+        renderRange(startStr, endStr, { notes: withNotes });
+      } finally {
+        viewMonth = originalMonth;
       }
-    } catch (e) {}
 
-    await new Promise(function (resolve) {
-      requestAnimationFrame(function () {
+      try {
+        if (document.fonts && document.fonts.ready) await document.fonts.ready;
+      } catch (e) {}
+
+      await new Promise(function (resolve) {
         requestAnimationFrame(function () {
-          setTimeout(resolve, 150);
+          requestAnimationFrame(function () { setTimeout(resolve, 150); });
         });
       });
-    });
 
-    try {
-      var EXPORT_SCALE = 3;
+      // Escala adaptativa: 3x quando cabe; reduz em períodos longos para não estourar o limite de canvas (principalmente no iPhone)
+      var rect = wrapper.getBoundingClientRect();
+      var cw = Math.max(1, Math.ceil(rect.width)), ch = Math.max(1, Math.ceil(rect.height));
+      var scale = Math.min(3, Math.sqrt(15000000 / (cw * ch)), 8000 / Math.max(cw, ch));
+      scale = Math.max(1, Math.round(scale * 100) / 100);
+
       var canvas = await html2canvas(wrapper, {
         backgroundColor: '#ffffff',
-        scale: EXPORT_SCALE,
+        scale: scale,
         useCORS: true,
         logging: false,
         imageTimeout: 0,
-        allowTaint: false
+        allowTaint: false,
+        // a imagem sai sempre com o visual claro, mesmo com o tema escuro ativo
+        onclone: function (doc) { doc.documentElement.removeAttribute('data-theme'); }
       });
-
-      var mimeType = format === 'jpg' ? 'image/jpeg' : 'image/png';
-      var quality = format === 'jpg' ? 0.95 : 1;
 
       var blob = await new Promise(function (resolve) {
-        canvas.toBlob(function (b) { resolve(b); }, mimeType, quality);
+        canvas.toBlob(function (b) { resolve(b); }, 'image/png');
       });
-
       if (!blob) throw new Error('Falha ao gerar blob');
 
       var safeName = (state.teamName || 'equipe').replace(/[^\w\-]+/g, '-').toLowerCase();
-      var ext = format === 'jpg' ? 'jpg' : 'png';
-      var filename = 'escala-' + safeName + '-' + startStr + '_' + endStr + '.' + ext;
+      var filename = 'escala-' + safeName + '-' + startStr + '_' + endStr + '.png';
 
-      if (action === 'share' && canShareFiles()) {
-        try {
-          var file = new File([blob], filename, { type: mimeType });
-          if (navigator.canShare({ files: [file] })) {
-            await navigator.share({
-              files: [file],
-              title: 'Escala ' + state.teamName,
-              text: 'Escala ' + state.teamName + ' (' + periodStr + ')'
-            });
-            toast('✓ Compartilhado com qualidade original');
-            return;
-          }
-        } catch (err) {
-          if (err && err.name === 'AbortError') return;
-          console.warn('[Share] Falhou, usando download:', err);
-        }
-      }
-
-      downloadBlob(blob, filename);
-      toast('✓ Exportado com sucesso!');
-
+      showImageResult(blob, filename, periodStr, canvas.width, canvas.height);
     } catch (err) {
       console.error('[Image Export] Erro:', err);
-      toast('Erro ao gerar imagem.');
+      toast('Erro ao gerar imagem. Tente um período menor.');
     } finally {
       _exporting = false;
+      _exportBusy = false;
       if (wrapper.parentNode) wrapper.parentNode.removeChild(wrapper);
     }
   }
@@ -1821,7 +2130,9 @@
 
   viewSettings.addEventListener('change', function (e) {
     var t = e.target;
+    if (t.id === 'themeSelect') { setThemePref(t.value); return; }
     if (t.id === 'teamNameInput') { state.teamName = t.value.trim() || 'Equipe'; save(); renderHeader(); return; }
+    if (t.matches('.limit-config')) { if (!state.limits) state.limits = {}; state.limits[t.dataset.key] = parseInt(t.value, 10); save(); renderActive(); return; }
     if (t.matches('.sun-rule-config')) { state.sundayRule[t.dataset.key] = parseInt(t.value, 10); save(); return; }
     if (t.matches('.def-shift')) { state.defaultShift[t.dataset.emp] = t.value; save(); return; }
     if (t.matches('.emp-scale')) { if (!state.employeeScale) state.employeeScale = {}; state.employeeScale[t.dataset.emp] = t.value; save(); return; }
@@ -1892,6 +2203,136 @@
     }
   });
 
+  // ==========================================
+  // TEMA (claro / escuro / automático) — preferência salva neste dispositivo
+  // ==========================================
+  var THEME_KEY = 'escala-theme';
+  var ICON_MOON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
+  var ICON_SUN = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>';
+
+  function getThemePref() {
+    try { var v = localStorage.getItem(THEME_KEY); return (v === 'light' || v === 'dark') ? v : 'auto'; } catch (e) { return 'auto'; }
+  }
+  function systemPrefersDark() {
+    return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  }
+  function isDarkNow() {
+    var p = getThemePref();
+    return p === 'dark' || (p === 'auto' && systemPrefersDark());
+  }
+  function applyTheme() {
+    var dark = isDarkNow();
+    if (dark) document.documentElement.setAttribute('data-theme', 'dark');
+    else document.documentElement.removeAttribute('data-theme');
+    var meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', dark ? '#0b1220' : '#ffffff');
+    var btn = document.getElementById('themeBtn');
+    if (btn) {
+      btn.innerHTML = dark ? ICON_SUN : ICON_MOON;
+      var lbl = dark ? 'Mudar para o tema claro' : 'Mudar para o tema escuro';
+      btn.setAttribute('aria-label', lbl); btn.title = lbl;
+    }
+    var sel = document.getElementById('themeSelect');
+    if (sel) sel.value = getThemePref();
+  }
+  function setThemePref(p) {
+    try { if (p === 'auto') localStorage.removeItem(THEME_KEY); else localStorage.setItem(THEME_KEY, p); } catch (e) {}
+    applyTheme();
+  }
+  $('themeBtn').addEventListener('click', function () { setThemePref(isDarkNow() ? 'light' : 'dark'); });
+  if (window.matchMedia) {
+    var _mq = window.matchMedia('(prefers-color-scheme: dark)');
+    var _mqHandler = function () { if (getThemePref() === 'auto') applyTheme(); };
+    if (_mq.addEventListener) _mq.addEventListener('change', _mqHandler); else if (_mq.addListener) _mq.addListener(_mqHandler);
+  }
+  // Impressão sempre no visual claro (papel)
+  window.addEventListener('beforeprint', function () { document.documentElement.removeAttribute('data-theme'); });
+  window.addEventListener('afterprint', function () { applyTheme(); });
+
+  // ---------- Alertas: clique leva até o problema ----------
+  document.addEventListener('click', function (e) {
+    if (!e.target.closest) return;
+    var go = e.target.closest('.goto-notes');
+    if (go) { switchToView('notes'); return; }
+    var b = e.target.closest('.issue-item');
+    if (!b) return;
+    var date = b.dataset.date, emp = b.dataset.emp;
+    if (b.dataset.act === 'sheet' && emp) { openSheet(emp, date); return; }
+    currentDate = new Date(date + 'T00:00:00');
+    switchToView('week');
+  });
+
+  // ---------- Anotações na ficha da célula ----------
+  $('noteAddBtn').addEventListener('click', function () {
+    if (!sheetCtx) return;
+    var scope = $('noteScope').value;
+    var ok = addNote(sheetCtx.date, scope === 'day' ? '' : sheetCtx.emp, $('noteInput').value, $('noteImportant').checked);
+    if (!ok) { toast('Escreva a anotação antes de adicionar.'); return; }
+    $('noteInput').value = ''; $('noteImportant').checked = false;
+    renderSheetNotes(); renderActive(); toast('Anotação adicionada');
+  });
+  $('sheetNotesList').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-sheet-note-del]');
+    if (!b || !sheetCtx) return;
+    deleteNote(sheetCtx.date, b.dataset.sheetNoteDel);
+    renderSheetNotes(); renderActive(); toast('Anotação removida');
+  });
+
+  // ---------- Aba Notas ----------
+  viewNotes.addEventListener('input', function (e) {
+    if (e.target.id === 'nvSearch') { notesFilter.q = e.target.value; editingNote = null; renderNotesList(); }
+  });
+  viewNotes.addEventListener('click', function (e) {
+    var t = e.target;
+    var chip = t.closest('[data-nf]');
+    if (chip) {
+      notesFilter.mode = chip.dataset.nf; editingNote = null;
+      viewNotes.querySelectorAll('.note-chip').forEach(function (c) { c.classList.toggle('active', c === chip); });
+      renderNotesList();
+      return;
+    }
+    var gd = t.closest('[data-goto-date]');
+    if (gd) { currentDate = new Date(gd.dataset.gotoDate + 'T00:00:00'); switchToView('week'); return; }
+    if (t.closest('#nvAdd')) {
+      var date = $('nvDate').value, scope = $('nvScope').value;
+      if (!date) { toast('Escolha a data.'); return; }
+      var ok = addNote(date, scope === 'day' ? '' : scope.slice(4), $('nvText').value, $('nvImp').checked);
+      if (!ok) { toast('Escreva a anotação antes de adicionar.'); return; }
+      var dd = new Date(date + 'T00:00:00');
+      if (dd.getMonth() !== currentDate.getMonth() || dd.getFullYear() !== currentDate.getFullYear()) {
+        currentDate = new Date(dd.getFullYear(), dd.getMonth(), 1);
+        renderActive();
+      } else {
+        $('nvText').value = ''; $('nvImp').checked = false;
+        renderNotesList(); updateBadges();
+      }
+      toast('Anotação adicionada');
+      return;
+    }
+    var actBtn = t.closest('[data-na]');
+    if (!actBtn) return;
+    var item = actBtn.closest('.note-item');
+    if (!item) return;
+    var nDate = item.dataset.date, nId = item.dataset.id, act = actBtn.dataset.na;
+    var note = getNotes(nDate).filter(function (x) { return x.id === nId; })[0];
+    if (!note) return;
+    if (act === 'imp') { updateNote(nDate, nId, { important: !note.important }); renderNotesList(); }
+    else if (act === 'edit') { editingNote = { date: nDate, id: nId }; renderNotesList(); }
+    else if (act === 'cancel') { editingNote = null; renderNotesList(); }
+    else if (act === 'save') {
+      var txt = ($('editNoteText').value || '').trim();
+      if (!txt) { toast('A anotação não pode ficar vazia.'); return; }
+      updateNote(nDate, nId, { text: txt.slice(0, 600), edited: true });
+      editingNote = null; renderNotesList(); toast('Anotação atualizada');
+    }
+    else if (act === 'del') {
+      showDialog({
+        title: 'Excluir anotação', body: 'Excluir esta anotação? Essa ação não pode ser desfeita.', confirmText: 'Excluir', isDanger: true,
+        onConfirm: function () { deleteNote(nDate, nId); renderNotesList(); updateBadges(); toast('Anotação removida'); }
+      });
+    }
+  });
+
   window.changeTeam = function () {
     currentTeam = null;
     updateHeaderUI();
@@ -1906,5 +2347,6 @@
     sb.auth.signOut();
   };
 
+  applyTheme();
   initApp();
 })();
