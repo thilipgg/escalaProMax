@@ -88,11 +88,23 @@ main{
 .wk-day-head.weekend{background:#eef4ff}
 .wk-day-head.holiday{background:var(--primary) !important;color:#fff !important}
 .wk-day-head.holiday .wk-dow{color:#bfdbfe !important}
-.wk-day-head.today{box-shadow:inset 0 -3px 0 var(--primary)}
 .wk-day-head.missing-essential{box-shadow:inset 0 -3px 0 var(--danger)}
-.wk-day-head.today.missing-essential{box-shadow:inset 0 -3px 0 var(--primary),inset 0 -6px 0 var(--danger)}
 .wk-dow{display:block;font-size:clamp(7.5px, 0.6vw, 11px);color:var(--muted);text-transform:uppercase;font-weight:700;letter-spacing:.06em}
 .wk-num{display:block;font-size:clamp(13px, 1.1vw, 18px);font-weight:700;margin-top:2px}
+
+/* ---- HOJE (Semana): pílula no número, sem sublinhado ---- */
+.wk-day-head.today .wk-dow{color:var(--primary);font-weight:800}
+.wk-day-head.today .wk-num{
+  width:fit-content;min-width:26px;height:24px;padding:0 8px;margin:3px auto 0;
+  background:var(--primary);color:#fff;border-radius:20px;
+  box-shadow:0 2px 6px rgba(37,99,235,.35);
+  font-weight:800;letter-spacing:-.02em;line-height:24px;text-align:center;
+}
+/* Hoje caindo num feriado (fundo azul): pílula branca p/ manter contraste */
+.wk-day-head.today.holiday .wk-num{
+  background:#fff;color:var(--primary);box-shadow:0 2px 6px rgba(0,0,0,.15);
+}
+
 .wk-emp{background:var(--surface);padding:clamp(4px, 0.7vw, 12px) clamp(3px, 0.4vw, 8px);font-size:clamp(9.5px, 0.85vw, 13.5px);font-weight:700;display:flex;align-items:center;justify-content:center;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-right:1px solid var(--border);color:var(--text-secondary)}
 .wk-cell{background:var(--surface);height:100%;min-height:0;font-size:clamp(13px, 0.9vw + 8px, 18px);font-weight:700;display:flex;align-items:center;justify-content:center;border:none;position:relative;transition:filter .12s, transform .12s;cursor:pointer;overflow:hidden;line-height:1}
 .wk-cell.holiday{background:var(--primary) !important}
@@ -121,9 +133,20 @@ main{
 .grid-table thead th.weekend{background:#eef4ff}
 .grid-table thead th.holiday{background:var(--primary) !important;color:#fff !important}
 .grid-table thead th.holiday .dow{color:#bfdbfe !important}
-.grid-table thead th.today{box-shadow:inset 0 -3px 0 var(--primary)}
 .grid-table thead th.missing-essential{box-shadow:inset 0 -3px 0 var(--danger)}
-.grid-table thead th.today.missing-essential{box-shadow:inset 0 -3px 0 var(--primary),inset 0 -6px 0 var(--danger)}
+
+/* ---- HOJE (Mês): pílula no número, sem sublinhado ---- */
+.grid-table thead th.today .dow{color:var(--primary);font-weight:800}
+.grid-table thead th.today .dnum{
+  width:fit-content;min-width:26px;height:24px;padding:0 8px;margin:3px auto 0;
+  background:var(--primary);color:#fff;border-radius:20px;
+  box-shadow:0 2px 6px rgba(37,99,235,.35);
+  font-weight:800;letter-spacing:-.02em;line-height:24px;text-align:center;
+}
+.grid-table thead th.today.holiday .dnum{
+  background:#fff;color:var(--primary);box-shadow:0 2px 6px rgba(0,0,0,.15);
+}
+
 .grid-table .sticky-col{position:sticky;left:0;z-index:2;background:var(--surface);width:var(--sticky-col-w);min-width:var(--sticky-col-w);text-align:left;padding-left:clamp(10px, 1vw, 20px);font-size:clamp(11px, 0.85vw, 14px);font-weight:700;box-shadow:1px 0 0 var(--border);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-secondary)}
 .grid-table thead .sticky-col{z-index:3;background:var(--surface-2);font-size:clamp(9.5px, 0.75vw, 11px);color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding-left:clamp(10px, 1vw, 20px)}
 .grid-table td.cell{font-size:clamp(11.5px, 0.85vw, 14px);font-weight:700;cursor:pointer;user-select:none;transition:filter .12s, transform .12s;min-width:var(--day-min-w)}
@@ -459,6 +482,18 @@ main{
   .legend{display:flex !important;flex-wrap:wrap !important;gap:5px !important;padding:8px 0 0 !important;margin:0 !important;page-break-inside:avoid;}
   .legend-item{font-size:7pt !important;padding:3px 7px !important;box-shadow:none !important;border:1px solid #64748b !important;}
   .legend-dot{width:11px !important;height:11px !important;font-size:6pt !important;border:1px solid rgba(0,0,0,.25) !important;}
+
+  /* Em papel, "hoje" volta a ser neutro */
+  .wk-day-head.today .wk-num,
+  .grid-table thead th.today .dnum{
+    width:auto !important;min-width:0 !important;height:auto !important;
+    padding:0 !important;margin:0 !important;
+    background:transparent !important;color:inherit !important;
+    box-shadow:none !important;border-radius:0 !important;
+    letter-spacing:inherit !important;line-height:inherit !important;
+  }
+  .wk-day-head.today .wk-dow,
+  .grid-table thead th.today .dow{color:inherit !important}
 }
 
 /* ============================================================
@@ -554,6 +589,19 @@ main{
 }
 .png-export-wrapper .legend {
   padding-top: 16px !important;
+}
+
+/* Hoje no PNG: pílula consistente com as demais medidas fixas */
+.png-export-wrapper .grid-table thead th.today .dnum,
+.png-export-wrapper .wk-day-head.today .wk-num{
+  display:block !important;
+  width:fit-content !important;min-width:26px !important;height:24px !important;
+  padding:0 8px !important;margin:3px auto 0 !important;
+  background:var(--primary) !important;color:#fff !important;
+  border-radius:20px !important;
+  box-shadow:0 2px 6px rgba(37,99,235,.35) !important;
+  line-height:24px !important;text-align:center !important;
+  letter-spacing:-.02em !important;
 }
 
 /* ============================================================
@@ -754,7 +802,7 @@ main{
 :root[data-theme="dark"] .note-item.imp,
 :root[data-theme="dark"] .note-line.imp{background:#2b2209}
 :root[data-theme="dark"] .note-actions .na-on{background:#5c4710;border-color:#8a6a14;color:#fde68a}
-:root[data-theme="dark"] .note-actions .na-danger:hover{background:#3b1519;border-color:#5b2327}
+:root[data-theme="dark"] .note-actions .na-danger:hover{background:#3b1519;border-bottom-color:#5b2327}
 
 /* botões com hover claro */
 :root[data-theme="dark"] .danger-btn:hover,
