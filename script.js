@@ -73,6 +73,13 @@
     if (!s.sundayRule) s.sundayRule = { maxWorkers: 2, maxConsecutive: 2 };
     if (!s.limits) s.limits = { maxConsecutiveDays: 6 };
     if (!s.notes || typeof s.notes !== 'object') s.notes = {};
+    Object.keys(s.shifts).forEach(function (k) {
+      var sh = s.shifts[k];
+      if (sh && sh.type === 'event' && sh.color) {
+        var expected = getContrastColor(sh.color);
+        if (!sh.text || getContrastColor(sh.text) === expected) sh.text = expected;
+      }
+    });
     return s;
   }
 
@@ -88,6 +95,10 @@
         state = getDefaultState();
         await doSave();
       }
+      if (currentTeam.name && state.teamName !== currentTeam.name) {
+        state.teamName = currentTeam.name;
+      }
+      if (syncAllAutoFENotes()) save();
       _syncState = 'synced';
       _lastSyncTime = new Date();
     } catch (e) {
@@ -137,15 +148,26 @@
 
   function updateStorageStatus(mode) {
     if (mode) _syncState = mode;
-    var el = document.getElementById('storageStatus');
-    if (!el) return;
+    var els = document.querySelectorAll('[data-sync-pill]');
+    if (!els.length) return;
     var now = _lastSyncTime || new Date();
     var timeStr = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
-    if (_syncState === 'pending') { el.textContent = '⟳ Alterações pendentes'; el.style.background = '#fef3c7'; el.style.color = '#92400e'; }
-    else if (_syncState === 'saving') { el.textContent = '⟳ Sincronizando...'; el.style.background = '#fef3c7'; el.style.color = '#92400e'; }
-    else if (_syncState === 'synced') { el.textContent = '✓ Nuvem · ' + timeStr; el.style.background = '#dcfce7'; el.style.color = '#166534'; }
-    else if (_syncState === 'error') { el.textContent = '✗ Erro de sincronização'; el.style.background = '#fee2e2'; el.style.color = '#991b1b'; }
-    else { el.textContent = '—'; el.style.background = '#f1f5f9'; el.style.color = '#475569'; }
+    var txt = '—', cls = '';
+    if (_syncState === 'pending') { txt = '⟳ Pendente'; cls = 'pending'; }
+    else if (_syncState === 'saving') { txt = '⟳ Sincronizando...'; cls = 'saving'; }
+    else if (_syncState === 'synced') { txt = '✓ Nuvem · ' + timeStr; cls = 'synced'; }
+    else if (_syncState === 'error') { txt = '✗ Erro de sincronização'; cls = 'error'; }
+    els.forEach(function (el) {
+      el.textContent = txt;
+      el.className = 'sync-pill' + (cls ? ' ' + cls : '');
+    });
+  }
+
+  function initialsOf(str) {
+    var parts = String(str || '?').trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return '?';
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
   }
 
   // ==========================================
@@ -392,7 +414,7 @@
     });
   }
 
-  var dialogCallback = null, dialogCancelCb = null;
+  var dialogCallback = null, dialogCancelCb = null, dialogExtraCb = null;
   function showDialog(opt) {
     $('dialogTitle').textContent = opt.title;
     $('dialogBody').innerHTML = opt.body;
@@ -400,8 +422,19 @@
     btn.textContent = opt.confirmText || 'Confirmar';
     btn.className = 'dialog-confirm' + (opt.isDanger === false ? ' primary' : '');
     $('dialogCancel').textContent = opt.cancelText || 'Cancelar';
+    var extraBtn = $('dialogExtra');
+    if (extraBtn) {
+      if (opt.extraText) {
+        extraBtn.textContent = opt.extraText;
+        extraBtn.classList.remove('hidden');
+      } else {
+        extraBtn.textContent = '';
+        extraBtn.classList.add('hidden');
+      }
+    }
     dialogCallback = opt.onConfirm || null;
     dialogCancelCb = opt.onCancel || null;
+    dialogExtraCb = opt.onExtra || null;
     $('dialogBackdrop').classList.add('open');
     if (typeof opt.onOpen === 'function') opt.onOpen();
   }
@@ -410,11 +443,18 @@
     var result = cb ? cb() : undefined;
     if (result === false) return;
     $('dialogBackdrop').classList.remove('open');
-    dialogCallback = null; dialogCancelCb = null;
+    dialogCallback = null; dialogCancelCb = null; dialogExtraCb = null;
+  });
+  $('dialogExtra').addEventListener('click', function () {
+    var cb = dialogExtraCb;
+    var result = cb ? cb() : undefined;
+    if (result === false) return;
+    $('dialogBackdrop').classList.remove('open');
+    dialogCallback = null; dialogCancelCb = null; dialogExtraCb = null;
   });
   $('dialogCancel').addEventListener('click', function () {
     $('dialogBackdrop').classList.remove('open');
-    var cb = dialogCancelCb; dialogCallback = null; dialogCancelCb = null;
+    var cb = dialogCancelCb; dialogCallback = null; dialogCancelCb = null; dialogExtraCb = null;
     if (cb) cb();
   });
 
@@ -429,7 +469,8 @@
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape') return;
     if ($('dialogBackdrop').classList.contains('open')) { $('dialogCancel').click(); return; }
-    if (sheet.classList.contains('open')) closeSheet();
+    if (sheet.classList.contains('open')) { closeSheet(); return; }
+    if ($('notesDrawer') && $('notesDrawer').classList.contains('open')) closeNotesDrawer();
   });
 
   function pad(n) { return String(n).padStart(2, '0'); }
@@ -506,6 +547,130 @@
     return count;
   }
 
+  var HOLIDAY_MAX_DAYS = 60, HOLIDAY_WARN_DAYS = 15;
+  function parseKeyUTC(k) { var p = k.split('-'); return Date.UTC(+p[0], +p[1] - 1, +p[2]); }
+  function addDaysKey(k, days) {
+    var dt = new Date(parseKeyUTC(k) + days * 86400000);
+    return dt.getUTCFullYear() + '-' + pad(dt.getUTCMonth() + 1) + '-' + pad(dt.getUTCDate());
+  }
+  function diffDays(kFrom, kTo) {
+    return Math.round((parseKeyUTC(kTo) - parseKeyUTC(kFrom)) / 86400000);
+  }
+  function fmtFullDate(k) { var p = k.split('-'); return p[2] + '/' + p[1] + '/' + p[0]; }
+
+  function isClosedStoreEvent(code) {
+    var s = getShift(code);
+    if (!s || s.type !== 'event') return false;
+    return !!s.closedStore || /loja\s*fechad|fechad|sem\s*expediente/i.test(s.name || '');
+  }
+  function dayIsStoreClosed(key) {
+    var d = state.schedule[key];
+    if (!d) return false;
+    return state.employees.some(function (emp) { return isClosedStoreEvent(d[emp]); });
+  }
+
+  function computeEmpHolidayCredits(emp, opts) {
+    opts = opts || {};
+    var todayKey = opts.todayKey || keyOf(new Date());
+    var credits = [];
+    Object.keys(state.holidays || {}).sort().forEach(function (hDate) {
+      if (opts.excludeDate === hDate) return;
+      var code = (state.schedule[hDate] || {})[emp];
+      if (isWorkShift(code)) {
+        credits.push({
+          emp: emp,
+          holDate: hDate,
+          holName: state.holidays[hDate] || 'Feriado',
+          limitDate: addDaysKey(hDate, HOLIDAY_MAX_DAYS),
+          usedBy: '',
+          lateUsed: false,
+          daysLeft: 0,
+          status: 'ok'
+        });
+      }
+    });
+
+    var usages = [];
+    Object.keys(state.schedule || {}).sort().forEach(function (uDate) {
+      if (opts.excludeDate === uDate || isHoliday(uDate)) return;
+      if ((state.schedule[uDate] || {})[emp] === 'FE') usages.push(uDate);
+    });
+
+    var pairMap = {}, orphanMap = {};
+    usages.forEach(function (uDate) {
+      var match = null;
+      for (var i = 0; i < credits.length; i++) {
+        if (!credits[i].usedBy && credits[i].holDate <= uDate) { match = credits[i]; break; }
+      }
+      if (match) {
+        match.usedBy = uDate;
+        match.lateUsed = (uDate > match.limitDate);
+        match.status = match.lateUsed ? 'used_late' : 'used';
+        pairMap[uDate] = match;
+      } else {
+        orphanMap[uDate] = true;
+      }
+    });
+
+    credits.forEach(function (c) {
+      if (c.usedBy) return;
+      c.daysLeft = diffDays(todayKey, c.limitDate);
+      c.status = c.daysLeft < 0 ? 'expired' : (c.daysLeft <= HOLIDAY_WARN_DAYS ? 'soon' : 'ok');
+    });
+
+    return {
+      credits: credits,
+      pairMap: pairMap,
+      orphanMap: orphanMap,
+      pending: credits.filter(function (c) { return !c.usedBy; })
+    };
+  }
+
+  function purgeAutoFENotes() {
+    if (!state.notes) return false;
+    var changed = false;
+    Object.keys(state.notes).forEach(function (date) {
+      var arr = state.notes[date] || [];
+      var kept = arr.filter(function (n) { return !n.autoFE; });
+      if (kept.length !== arr.length) {
+        changed = true;
+        if (kept.length) state.notes[date] = kept;
+        else delete state.notes[date];
+      }
+    });
+    return changed;
+  }
+
+  function syncAutoFENotes() { return purgeAutoFENotes(); }
+  function syncAllAutoFENotes() { return purgeAutoFENotes(); }
+
+  function getFERefInfo(emp, dateStr) {
+    if (!emp || !dateStr || isHoliday(dateStr)) return null;
+    if (((state.schedule || {})[dateStr] || {})[emp] !== 'FE') return null;
+    var info = computeEmpHolidayCredits(emp);
+    var c = info.pairMap[dateStr];
+    if (c) {
+      return {
+        status: c.lateUsed ? 'late' : 'ok',
+        holDate: c.holDate,
+        holName: c.holName,
+        limitDate: c.limitDate,
+        holLabel: c.holName + ' (' + fmtShort(c.holDate) + ')',
+        badge: c.lateUsed ? 'Passou de 60d' : 'Dentro dos 60d ✓',
+        sub: c.lateUsed ? ('Limite era ' + fmtShort(c.limitDate) + ' · fora do prazo') : ('Prazo máximo até ' + fmtShort(c.limitDate))
+      };
+    }
+    return {
+      status: 'empty',
+      holDate: '',
+      holName: '',
+      limitDate: '',
+      holLabel: 'Sem feriado pendente',
+      badge: 'Sem crédito',
+      sub: 'Nenhum feriado trabalhado disponível'
+    };
+  }
+
   function getHolidayBalances(limitDate, excludeDate, excludeEmp) {
     var b = {};
     state.employees.forEach(function (e) { b[e] = 0; });
@@ -539,7 +704,8 @@
   // ==========================================
   var TYPE_LABEL = {
     rest: 'Descanso 11h', run: 'Dias seguidos', sunday: 'Domingo', sundayc: 'Domingos seguidos',
-    essential: 'Turno essencial', week: 'Folgas', balance: 'Saldo feriado', empty: 'Vazio'
+    essential: 'Turno essencial', week: 'Folgas', balance: 'Saldo feriado',
+    fe_exp: 'Prazo FE 60d', fe_soon: 'Prazo FE', empty: 'Vazio'
   };
   var SEV_ORDER = { error: 0, warn: 1, info: 2 };
 
@@ -586,8 +752,25 @@
     var out = [];
     if (!code) return out;
     if (code === 'FE' && !isHoliday(date)) {
-      var b = getHolidayBalances(date, date, emp);
-      if (b[emp] <= 0) out.push({ sev: 'warn', type: 'balance', msg: 'Saldo de folgas de feriado até esta data é ' + b[emp] + '. A folga está sendo usada sem saldo.' });
+      var saved = (state.schedule[date] || {})[emp] === 'FE';
+      if (saved) {
+        var info = computeEmpHolidayCredits(emp);
+        if (info.orphanMap[date]) {
+          out.push({ sev: 'warn', type: 'balance', msg: 'Sem feriado trabalhado pendente até esta data. Folga lançada sem saldo.' });
+        } else if (info.pairMap[date] && info.pairMap[date].lateUsed) {
+          var c = info.pairMap[date];
+          out.push({ sev: 'error', type: 'fe_exp', msg: 'Fora do prazo de 60 dias: o feriado ' + fmtShort(c.holDate) + ' (' + c.holName + ') venceu em ' + fmtShort(c.limitDate) + '.' });
+        }
+      } else {
+        var sim = computeEmpHolidayCredits(emp, { excludeDate: date });
+        var elig = sim.pending.filter(function (c) { return c.holDate <= date; });
+        if (!elig.length) {
+          out.push({ sev: 'warn', type: 'balance', msg: 'Saldo de folgas de feriado até esta data é 0. A folga está sendo usada sem saldo.' });
+        } else if (date > elig[0].limitDate) {
+          var c0 = elig[0];
+          out.push({ sev: 'error', type: 'fe_exp', msg: 'Fora do prazo de 60 dias: o feriado pendente mais antigo (' + fmtShort(c0.holDate) + ' — ' + c0.holName + ') venceu em ' + fmtShort(c0.limitDate) + '.' });
+        }
+      }
       return out;
     }
     if (!isWorkShift(code)) return out;
@@ -673,7 +856,7 @@
       state.employees.forEach(function (emp) {
         var code = (state.schedule[key] || {})[emp];
         if (!code) {
-          if (planned && dow !== 0) add({ sev: 'info', type: 'empty', emp: emp, date: key, msg: 'Sem lançamento neste dia.' });
+          if (planned && dow !== 0 && !dayIsStoreClosed(key)) add({ sev: 'info', type: 'empty', emp: emp, date: key, msg: 'Sem lançamento neste dia.' });
           return;
         }
         getCellIssues(emp, key, code).forEach(function (i) {
@@ -684,6 +867,25 @@
         });
       });
     }
+
+    var todayKeyFE = keyOf(new Date());
+    state.employees.forEach(function (emp) {
+      var feInfo = computeEmpHolidayCredits(emp, { todayKey: todayKeyFE });
+      feInfo.pending.forEach(function (c) {
+        var anchor = (c.limitDate >= startStr && c.limitDate <= endStr) ? c.limitDate : startStr;
+        if (c.status === 'expired') {
+          add({
+            sev: 'error', type: 'fe_exp', id: 'feexp|' + emp + '|' + c.holDate, emp: emp, date: anchor,
+            msg: 'Prazo de 60 dias vencido em ' + fmtShort(c.limitDate) + ' — feriado ' + fmtShort(c.holDate) + ' (' + c.holName + ') sem FE agendado.'
+          });
+        } else if (c.status === 'soon' || (c.limitDate >= startStr && c.limitDate <= endStr)) {
+          add({
+            sev: 'warn', type: 'fe_soon', id: 'fesoon|' + emp + '|' + c.holDate, emp: emp, date: anchor,
+            msg: 'Feriado ' + fmtShort(c.holDate) + ' (' + c.holName + ') vence em ' + fmtShort(c.limitDate) + (c.daysLeft >= 0 ? ' (faltam ' + c.daysLeft + 'd).' : '.')
+          });
+        }
+      });
+    });
 
     function weekCheck(ws) {
       var we = new Date(ws); we.setDate(ws.getDate() + 6);
@@ -710,7 +912,7 @@
   }
 
   function issueItemHTML(i) {
-    var act = (i.emp && i.type !== 'week') ? 'sheet' : 'goto';
+    var act = (i.emp && i.type !== 'week' && i.type !== 'fe_exp' && i.type !== 'fe_soon') ? 'sheet' : 'goto';
     var who = '<strong>' + (i.emp ? escapeHtml(i.emp) : 'Time') + '</strong>';
     var when = i.type === 'week' ? '' : '<span class="issue-when">' + fmtShort(i.date) + ' · ' + DOW[new Date(i.date + 'T00:00:00').getDay()] + '</span>';
     return '<button type="button" class="issue-item ' + i.sev + '" data-act="' + act + '" data-emp="' + escapeHtml(i.emp || '') + '" data-date="' + i.date + '">' +
@@ -804,11 +1006,32 @@
     if (!l.length) return '';
     return l.some(function (n) { return n.important; }) ? 'has-note has-note-imp' : 'has-note';
   }
-  function dayNoteMark(key) {
-    var l = dayNotes(key);
-    if (!l.length) return '';
-    var imp = l.some(function (n) { return n.important; });
-    return '<span class="day-note' + (imp ? ' imp' : '') + '" title="' + escapeHtml(l.map(function (n) { return n.text; }).join('\n')) + '">✎</span>';
+  function dayNoteInfo(key) {
+    var l = getNotes(key);
+    return {
+      total: l.length,
+      imp: l.some(function (n) { return n.important; })
+    };
+  }
+  function dayWideNoteInfo(key) {
+    var l = getNotes(key).filter(function (n) { return !n.emp; });
+    return {
+      total: l.length,
+      imp: l.some(function (n) { return n.important; })
+    };
+  }
+  function dayHeadNoteCls(key) {
+    var info = dayWideNoteInfo(key);
+    if (!info.total) return '';
+    return info.imp ? 'col-has-note col-has-note-imp' : 'col-has-note';
+  }
+  function colNoteCls(key) {
+    var info = dayWideNoteInfo(key);
+    if (!info.total) return '';
+    return info.imp ? 'col-note col-note-imp' : 'col-note';
+  }
+  function dayNoteDotHTML() {
+    return '';
   }
   function noteScopeLabel(n) { return n.emp ? '👤 ' + escapeHtml(n.emp) : '👥 Dia inteiro'; }
   function noteTime(n) {
@@ -816,21 +1039,207 @@
     try { return new Date(n.ts).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; }
   }
 
-  function weekNotesHTML(ws) {
+  function periodNotes(startStr, endStr) {
     var rows = [];
-    for (var i = 0; i < 7; i++) {
-      var d = new Date(ws); d.setDate(ws.getDate() + i);
-      var k = keyOf(d);
-      getNotes(k).forEach(function (n) { rows.push({ k: k, n: n }); });
+    var cur = new Date(startStr + 'T00:00:00');
+    var end = new Date(endStr + 'T00:00:00');
+    while (cur <= end) {
+      var k = keyOf(cur);
+      getNotes(k).forEach(function (n) { rows.push({ date: k, n: n }); });
+      cur.setDate(cur.getDate() + 1);
     }
-    if (!rows.length) return '';
-    return '<div class="issues-card notes-mini"><div class="issues-head"><h3>Anotações da semana</h3><span class="sev-pill info">' + rows.length + '</span>' +
-      '<button type="button" class="goto-notes">Ver todas</button></div><div class="note-lines">' +
-      rows.map(function (r) {
-        return '<div class="note-line' + (r.n.important ? ' imp' : '') + '"><span class="note-line-date">' + fmtShort(r.k) + '</span>' +
-          '<span class="note-line-scope">' + (r.n.emp ? escapeHtml(r.n.emp) : 'Time') + '</span>' +
-          '<span class="note-line-text">' + (r.n.important ? '★ ' : '') + escapeHtml(r.n.text) + '</span></div>';
-      }).join('') + '</div></div>';
+    rows.sort(function (a, b) {
+      if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+      return (a.n.ts || '') < (b.n.ts || '') ? -1 : 1;
+    });
+    return rows;
+  }
+
+  function gridTopbarHTML(startStr, endStr, opts) {
+    opts = opts || {};
+    var issues = computeIssues(startStr, endStr);
+    var errs = issues.filter(function (i) { return i.sev === 'error'; }).length;
+    var warns = issues.filter(function (i) { return i.sev === 'warn'; }).length;
+    var infos = issues.filter(function (i) { return i.sev === 'info'; }).length;
+    var notes = periodNotes(startStr, endStr);
+    var impCount = notes.filter(function (r) { return r.n.important; }).length;
+
+    var statusHtml = '';
+    if (errs || warns) {
+      var parts = [];
+      if (errs) parts.push(errs + (errs > 1 ? ' erros' : ' erro'));
+      if (warns) parts.push(warns + (warns > 1 ? ' avisos' : ' aviso'));
+      statusHtml = '<button type="button" class="topbar-status ' + (errs ? 'error' : 'warn') + '" data-open-drawer="alerts">⚠ ' + parts.join(' · ') + ' · Ver ›</button>';
+    } else if (opts.planned) {
+      var okTxt = '✓ ' + (opts.okTitle || 'Em dia') + (infos ? ' · ' + infos + ' vazia' + (infos > 1 ? 's' : '') : '');
+      statusHtml = infos
+        ? '<button type="button" class="topbar-status ok" data-open-drawer="alerts">' + okTxt + ' ›</button>'
+        : '<span class="topbar-status ok">' + okTxt + '</span>';
+    } else {
+      statusHtml = '<span class="topbar-status idle">Sem lançamentos</span>';
+    }
+
+    var notesLabel = notes.length ? (notes.length + (notes.length === 1 ? ' nota' : ' notas')) : 'Anotações';
+    var notesBtn = '<button type="button" class="topbar-notes-btn' + (notes.length ? ' has-notes' : '') + '" data-open-drawer="notes">' +
+      (impCount ? '<span class="drawer-imp-dot" title="' + impCount + ' prioritária(s)"></span>' : '') +
+      '<span>📝 ' + notesLabel + '</span></button>';
+
+    return '<div class="grid-topbar">' + statusHtml + notesBtn + '</div>';
+  }
+
+  var drawerState = { open: false, filter: 'all', day: '', editing: null, composing: false };
+
+  function getDrawerRange() {
+    if (activeView === 'month') {
+      var y = currentDate.getFullYear(), m = currentDate.getMonth(), n = daysInMonth(currentDate);
+      return { start: dateKey(y, m, 1), end: dateKey(y, m, n), title: 'Anotações do mês', sub: MONTHS[m] + ' ' + y };
+    }
+    var ws = getWeekStart(currentDate), we = new Date(ws);
+    we.setDate(ws.getDate() + 6);
+    var start = keyOf(ws), end = keyOf(we);
+    return { start: start, end: end, title: 'Anotações da semana', sub: formatRangeLabel(start, end) };
+  }
+
+  function defaultDateInRange(range) {
+    var today = keyOf(new Date());
+    if (today >= range.start && today <= range.end) return today;
+    return range.start;
+  }
+
+  function openNotesDrawer(opts) {
+    opts = opts || {};
+    drawerState.open = true;
+    drawerState.filter = opts.filter || 'all';
+    if ('day' in opts) drawerState.day = opts.day || '';
+    drawerState.editing = null;
+    renderNotesDrawer();
+    $('notesDrawer').classList.add('open');
+    $('notesDrawerBackdrop').classList.add('open');
+  }
+
+  function closeNotesDrawer() {
+    drawerState.open = false;
+    drawerState.editing = null;
+    drawerState.composing = false;
+    if ($('notesDrawer')) $('notesDrawer').classList.remove('open');
+    if ($('notesDrawerBackdrop')) $('notesDrawerBackdrop').classList.remove('open');
+  }
+
+  function n2CardHTML(date, n, isPriority) {
+    var d = new Date(date + 'T00:00:00');
+    var datePill = DOW[d.getDay()] + ' ' + fmtShort(date);
+    var scopeHtml = '';
+    if (n.emp) {
+      var code = (state.schedule[date] || {})[n.emp] || '';
+      var s = getShift(code);
+      var shiftTag = s
+        ? '<span class="n2-shift-tag">· ' + escapeHtml(s.label) + '</span>'
+        : '<span class="n2-shift-tag" style="color:var(--muted)">· Sem turno</span>';
+      scopeHtml = '<span class="n2-scope-pill">👤 ' + escapeHtml(n.emp) + ' ' + shiftTag + '</span>';
+    } else {
+      scopeHtml = '<span class="n2-scope-pill">👥 Dia inteiro</span>';
+    }
+    var editing = drawerState.editing && drawerState.editing.id === n.id && drawerState.editing.date === date;
+    var body = editing
+      ? '<textarea id="drwEditText" class="note-textarea" rows="3" maxlength="600">' + escapeHtml(n.text) + '</textarea>' +
+        '<div class="n2-acts"><button type="button" data-drw-act="save" class="na-primary">Salvar</button><button type="button" data-drw-act="cancel">Cancelar</button></div>'
+      : '<div class="n2-text">' + escapeHtml(n.text) + '</div>' +
+        '<div class="n2-foot"><span class="n2-meta">' + (n.by ? escapeHtml(n.by) + ' · ' : '') + noteTime(n) + (n.edited ? ' · editada' : '') + '</span>' +
+        '<div class="n2-acts">' +
+          (n.emp ? '<button type="button" data-drw-act="cell">Abrir célula ›</button>' : '') +
+          '<button type="button" data-drw-act="edit">Editar</button>' +
+          '<button type="button" data-drw-act="del" class="na-danger">Excluir</button>' +
+        '</div></div>';
+
+    return '<div class="n2-card' + (isPriority ? ' priority' : '') + '" data-date="' + date + '" data-id="' + n.id + '">' +
+      '<div class="n2-top"><span class="n2-date-pill">' + datePill + '</span>' + scopeHtml +
+      '<button type="button" class="n2-star-btn' + (n.important ? ' on' : '') + '" data-drw-act="imp" title="' + (n.important ? 'Remover prioridade' : 'Marcar como prioridade') + '">' + (n.important ? '★' : '☆') + '</button></div>' +
+      body + '</div>';
+  }
+
+  function renderNotesDrawer() {
+    var bodyEl = $('drawerBody'), chipsEl = $('drawerChips');
+    if (!bodyEl || !chipsEl) return;
+    var range = getDrawerRange();
+    $('drawerTitle').textContent = drawerState.filter === 'alerts' ? 'Alertas do período' : range.title;
+    $('drawerSub').textContent = range.sub;
+
+    var allNotes = periodNotes(range.start, range.end);
+    var issues = computeIssues(range.start, range.end);
+    var impAll = allNotes.filter(function (r) { return r.n.important; }).length;
+    var errs = issues.filter(function (i) { return i.sev === 'error'; }).length;
+    var warns = issues.filter(function (i) { return i.sev === 'warn'; }).length;
+
+    var chips = '<button type="button" class="drawer-chip' + (drawerState.filter === 'all' ? ' active' : '') + '" data-drw-filter="all">Todas (' + allNotes.length + ')</button>' +
+      '<button type="button" class="drawer-chip imp-chip' + (drawerState.filter === 'imp' ? ' active' : '') + '" data-drw-filter="imp">★ ' + impAll + '</button>';
+    if (drawerState.day) {
+      chips += '<button type="button" class="drawer-chip day-chip" data-drw-clear-day="1">📅 ' + fmtShort(drawerState.day) + ' ×</button>';
+    }
+    if (issues.length) {
+      chips += '<button type="button" class="drawer-chip' + (drawerState.filter === 'alerts' ? ' active' : '') + '" data-drw-filter="alerts">⚠ ' + issues.length + '</button>';
+    }
+    var fePendTotal = 0;
+    state.employees.forEach(function (e) { fePendTotal += computeEmpHolidayCredits(e).pending.length; });
+    chips += '<button type="button" class="drawer-chip' + (drawerState.filter === 'fe' ? ' active' : '') + '" data-drw-filter="fe">🏖 FE' + (fePendTotal ? ' (' + fePendTotal + ')' : '') + '</button>';
+    chips += '<button type="button" class="drawer-chip tab-link" data-drw-goto-notes="1">Aba Notas ›</button>';
+    chipsEl.innerHTML = chips;
+
+    var h = '';
+    if (drawerState.filter === 'alerts') {
+      var planned = false;
+      var cur = new Date(range.start + 'T00:00:00'), endD = new Date(range.end + 'T00:00:00');
+      while (cur <= endD) { if (dayPlanned(keyOf(cur))) { planned = true; break; } cur.setDate(cur.getDate() + 1); }
+      h = issuesCardHTML(issues, { title: 'Verificações do período', planned: planned, okTitle: 'Tudo em dia' });
+      if (!h) h = '<div class="notes-empty">Nenhum alerta ou célula vazia neste período.</div>';
+    } else if (drawerState.filter === 'fe') {
+      h = renderP3HolidayWidget({ compact: true });
+    } else {
+      if ((errs || warns) && !drawerState.day) {
+        var bParts = [];
+        if (errs) bParts.push(errs + (errs > 1 ? ' erros' : ' erro'));
+        if (warns) bParts.push(warns + (warns > 1 ? ' avisos' : ' aviso'));
+        h += '<button type="button" class="drawer-alert-banner' + (errs ? '' : ' warn') + '" data-drw-filter="alerts"><span>⚠ ' + bParts.join(' · ') + ' no período</span><span>Ver ›</span></button>';
+      }
+      var list = allNotes.filter(function (r) {
+        if (drawerState.day && r.date !== drawerState.day) return false;
+        if (drawerState.filter === 'imp' && !r.n.important) return false;
+        return true;
+      });
+      var imps = list.filter(function (r) { return r.n.important; });
+      var gens = list.filter(function (r) { return !r.n.important; });
+      if (imps.length) {
+        h += '<div class="n2-section-title priority"><span>★ Prioridade</span><span>' + imps.length + '</span></div>' +
+          imps.map(function (r) { return n2CardHTML(r.date, r.n, true); }).join('');
+      }
+      if (gens.length) {
+        h += '<div class="n2-section-title"><span>Gerais</span><span>' + gens.length + '</span></div>' +
+          gens.map(function (r) { return n2CardHTML(r.date, r.n, false); }).join('');
+      }
+      if (!list.length) {
+        h += '<div class="notes-empty">' + (drawerState.day ? 'Nenhuma anotação para ' + fmtShort(drawerState.day) + '.' : (drawerState.filter === 'imp' ? 'Nenhuma anotação prioritária neste período.' : 'Nenhuma anotação neste período. Use "+ Nova anotação" abaixo ou toque em uma célula.')) + '</div>';
+      }
+    }
+    bodyEl.innerHTML = h;
+
+    var toggleBtn = $('drawerNewToggle'), compEl = $('drawerComposer');
+    if (toggleBtn && compEl) {
+      toggleBtn.classList.toggle('hidden', !!drawerState.composing);
+      compEl.classList.toggle('hidden', !drawerState.composing);
+      if (drawerState.composing) {
+        var scopeSel = $('drwScope');
+        if (scopeSel) {
+          var prevVal = scopeSel.value;
+          scopeSel.innerHTML = '<option value="day">Dia inteiro (time)</option>' +
+            state.employees.map(function (e) { return '<option value="emp:' + escapeHtml(e) + '">' + escapeHtml(e) + '</option>'; }).join('');
+          if (prevVal) scopeSel.value = prevVal;
+        }
+      }
+    }
+
+    if (drawerState.editing) {
+      var ta = $('drwEditText');
+      if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+    }
   }
 
   var notesFilter = { q: '', mode: 'all' };
@@ -911,17 +1320,44 @@
     if (editingNote) { var ta = $('editNoteText'); if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); } }
   }
 
+  var sheetNoteState = { composing: false, editingId: null };
+
   function renderSheetNotes() {
-    var list = $('sheetNotesList');
+    var list = $('sheetNotesList'), titleEl = $('notesSectionTitle');
+    var comp = $('sheetNoteComposer'), toggle = $('sheetNoteToggle');
     if (!list || !sheetCtx) return;
     var emp = sheetCtx.emp, date = sheetCtx.date;
     var items = getNotes(date).filter(function (n) { return n.emp === emp || !n.emp; });
+    items.sort(function (a, b) {
+      if (!!a.important !== !!b.important) return a.important ? -1 : 1;
+      return (a.ts || '') < (b.ts || '') ? -1 : 1;
+    });
+    if (titleEl) titleEl.textContent = 'Anotações' + (items.length ? ' (' + items.length + ')' : '');
+
     list.innerHTML = items.length ? items.map(function (n) {
-      return '<div class="note-item mini' + (n.important ? ' imp' : '') + '"><div class="note-top"><span class="note-scope">' + noteScopeLabel(n) + '</span>' +
-        '<span class="note-meta">' + (n.by ? escapeHtml(n.by) + ' · ' : '') + noteTime(n) + '</span>' +
-        '<button type="button" class="note-x" data-sheet-note-del="' + n.id + '" aria-label="Excluir anotação">×</button></div>' +
-        '<div class="note-text">' + (n.important ? '★ ' : '') + escapeHtml(n.text) + '</div></div>';
+      var editing = sheetNoteState.editingId === n.id;
+      var scopeBadge = n.emp
+        ? '<span class="n2-scope-pill">👤 ' + escapeHtml(n.emp) + '</span>'
+        : '<span class="n2-scope-pill">👥 Dia inteiro</span>';
+      var bodyHtml = editing
+        ? '<textarea id="sheetEditNoteText" class="note-textarea" rows="2" maxlength="600">' + escapeHtml(n.text) + '</textarea>' +
+          '<div class="n2-acts"><button type="button" data-sheet-note-act="save" class="na-primary">Salvar</button><button type="button" data-sheet-note-act="cancel">Cancelar</button></div>'
+        : '<div class="n2-text">' + escapeHtml(n.text) + '</div>' +
+          '<div class="n2-foot"><span class="n2-meta">' + (n.by ? escapeHtml(n.by) + ' · ' : '') + noteTime(n) + (n.edited ? ' · editada' : '') + '</span>' +
+          '<div class="n2-acts"><button type="button" data-sheet-note-act="edit">Editar</button><button type="button" data-sheet-note-act="del" class="na-danger">Excluir</button></div></div>';
+      return '<div class="n2-card' + (n.important ? ' priority' : '') + '" data-id="' + n.id + '">' +
+        '<div class="n2-top">' + scopeBadge +
+        '<button type="button" class="n2-star-btn' + (n.important ? ' on' : '') + '" data-sheet-note-act="imp" title="' + (n.important ? 'Remover prioridade' : 'Marcar como prioridade') + '">' + (n.important ? '★' : '☆') + '</button></div>' +
+        bodyHtml + '</div>';
     }).join('') : '<div class="notes-empty small">Nenhuma anotação para este dia.</div>';
+
+    if (comp) comp.classList.toggle('hidden', !sheetNoteState.composing);
+    if (toggle) toggle.textContent = sheetNoteState.composing ? 'Fechar' : '+ Nova nota';
+
+    if (sheetNoteState.editingId) {
+      var ta = $('sheetEditNoteText');
+      if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+    }
   }
 
   function countSundayWorkers(date) {
@@ -930,7 +1366,7 @@
 
   function checkEssentialShifts(key) {
     var d = new Date(key + 'T00:00:00');
-    if (d.getDay() === 0 || !dayPlanned(key)) return { missing06: false, missing14: false };
+    if (d.getDay() === 0 || !dayPlanned(key) || dayIsStoreClosed(key)) return { missing06: false, missing14: false };
     var has06 = false, has14 = false;
     state.employees.forEach(function (emp) {
       var code = (state.schedule[key] || {})[emp];
@@ -938,6 +1374,20 @@
       if (code === '14:00') has14 = true;
     });
     return { missing06: !!state.shifts['06:00'] && !has06, missing14: !!state.shifts['14:00'] && !has14 };
+  }
+
+  function dayMissingChipsHTML(miss, compact) {
+    if (!miss || (!miss.missing06 && !miss.missing14)) return '';
+    var codes = [];
+    if (miss.missing06) codes.push('06');
+    if (miss.missing14) codes.push('14');
+    var tip = (codes.length === 2 ? 'Faltam turnos 06h e 14h' : ('Falta turno ' + codes[0] + 'h')) + ' — clique para ver alertas';
+    var chips = (compact && codes.length === 2)
+      ? '<span class="day-miss-chip">06·14</span>'
+      : codes.map(function (c) {
+          return '<span class="day-miss-chip">' + (compact ? c : '× ' + c) + '</span>';
+        }).join('');
+    return '<button type="button" class="day-miss-chips' + (compact ? ' compact' : '') + '" data-open-drawer="alerts" title="' + escapeHtml(tip) + '" aria-label="' + escapeHtml(tip) + '">' + chips + '</button>';
   }
 
   function renderHeader() {
@@ -969,14 +1419,22 @@
     }
     var start = getWeekStart(currentDate);
     var days = [];
-    for (var i = 0; i < 7; i++) { var d0 = new Date(start); d0.setDate(start.getDate() + i); days.push(d0); }
+    var wPlanned = false;
+    for (var i = 0; i < 7; i++) {
+      var d0 = new Date(start); d0.setDate(start.getDate() + i);
+      days.push(d0);
+      if (dayPlanned(keyOf(d0))) wPlanned = true;
+    }
+    var weekEndD = days[6];
     var todayStr = new Date().toDateString();
-    var h = '<div class="week-grid"><div class="wk-corner"></div>';
+    var h = gridTopbarHTML(keyOf(start), keyOf(weekEndD), { planned: wPlanned, okTitle: 'Semana em dia' });
+    h += '<div class="week-grid"><div class="wk-corner"></div>';
     for (var j = 0; j < days.length; j++) {
       var dH = days[j], keyH = keyOf(dH), dowH = dH.getDay();
       var miss = checkEssentialShifts(keyH);
       var missClass = (miss.missing06 || miss.missing14) ? 'missing-essential' : '';
-      var clsH = [dowH === 0 || dowH === 6 ? 'weekend' : '', isHoliday(keyH) ? 'holiday' : '', dH.toDateString() === todayStr ? 'today' : '', missClass].filter(Boolean).join(' ');
+      var dNoteCls = dayHeadNoteCls(keyH);
+      var clsH = [dowH === 0 || dowH === 6 ? 'weekend' : '', isHoliday(keyH) ? 'holiday' : '', dH.toDateString() === todayStr ? 'today' : '', missClass, dNoteCls].filter(Boolean).join(' ');
       var headStyle = '';
       if (dowH === 0) {
         var sun = state.colors.SUNDAY || { color: '#ef4444', text: '#ffffff' };
@@ -988,8 +1446,15 @@
         var maxW = state.sundayRule.maxWorkers || 2;
         badge = '<span class="sun-count ' + (nW <= maxW ? 'ok' : 'bad') + '">' + nW + '/' + maxW + '</span>';
       }
-      var alertIcon = (miss.missing06 || miss.missing14) ? '<span style="color:var(--danger);font-size:11px;display:block;line-height:1;margin-top:2px;" title="Falta turno essencial">⚠</span>' : '';
-      h += '<div class="wk-day-head ' + clsH + '" style="' + headStyle + '"><span class="wk-dow" style="' + (dowH === 0 ? 'color:inherit;opacity:.9' : '') + '">' + DOW[dowH] + '</span><span class="wk-num">' + dH.getDate() + '</span>' + badge + alertIcon + dayNoteMark(keyH) + '</div>';
+      var alertIcon = dayMissingChipsHTML(miss, false);
+      var nInfo = dayWideNoteInfo(keyH);
+      var missTipW = (miss.missing06 || miss.missing14)
+        ? ((miss.missing06 && miss.missing14 ? 'Faltam turnos 06h e 14h' : ('Falta turno ' + (miss.missing06 ? '06h' : '14h'))) + ' — clique para ver alertas')
+        : '';
+      var headTitle = nInfo.total
+        ? ' title="' + escapeHtml(nInfo.total + (nInfo.total > 1 ? ' anotações do dia — clique para abrir' : ' anotação do dia — clique para abrir')) + '"'
+        : (missTipW ? ' title="' + escapeHtml(missTipW) + '"' : '');
+      h += '<div class="wk-day-head ' + clsH + '" data-day-key="' + keyH + '"' + headTitle + ' style="' + headStyle + '"><span class="wk-dow" style="' + (dowH === 0 ? 'color:inherit;opacity:.9' : '') + '">' + DOW[dowH] + '</span><span class="day-num-row"><span class="wk-num">' + dH.getDate() + '</span>' + dayNoteDotHTML(keyH) + '</span>' + badge + alertIcon + '</div>';
     }
     for (var k = 0; k < state.employees.length; k++) {
       var emp = state.employees[k];
@@ -1015,21 +1480,12 @@
         if (printTxt) inner += '<span class="cell-print">' + printTxt + '</span>';
         var fl = cellFlag(emp, key, code);
         var holidayClass = isHoliday(key) ? 'holiday' : '';
-        h += '<button class="wk-cell ' + holidayClass + ' ' + fl.cls + ' ' + noteCls(emp, key) + '" data-emp="' + escapeHtml(emp) + '" data-date="' + key + '" data-print="' + printTxt + '" title="' + cellTitle(emp, key, fl.title) + '" style="' + style + '">' + inner + '</button>';
+        var isFERef = (code === 'FE' && !isHoliday(key));
+        var cTitle = cellTitle(emp, key, fl.title);
+        h += '<button class="wk-cell ' + holidayClass + ' ' + fl.cls + ' ' + colNoteCls(key) + ' ' + noteCls(emp, key) + '" data-emp="' + escapeHtml(emp) + '" data-date="' + key + '" data-print="' + printTxt + '"' + (isFERef ? ' data-fe-ref="1"' : '') + (cTitle ? ' title="' + cTitle + '"' : '') + ' style="' + style + '">' + inner + '</button>';
       }
     }
     h += '</div>';
-
-    var weekStart = getWeekStart(currentDate);
-    var weekEndD = new Date(weekStart); weekEndD.setDate(weekStart.getDate() + 6);
-    var wPlanned = false;
-    for (var pi = 0; pi < 7; pi++) {
-      var pd = new Date(weekStart); pd.setDate(weekStart.getDate() + pi);
-      if (dayPlanned(keyOf(pd))) { wPlanned = true; break; }
-    }
-    var wHtml = issuesCardHTML(computeIssues(keyOf(weekStart), keyOf(weekEndD)), { title: 'Alertas da semana', planned: wPlanned, okTitle: 'Semana em dia' });
-    var wNotes = weekNotesHTML(weekStart);
-    if (wHtml || wNotes) h += '<div class="week-alerts">' + wHtml + wNotes + '</div>';
     viewWeek.innerHTML = h;
   }
 
@@ -1040,20 +1496,30 @@
     }
     var y = currentDate.getFullYear(), m = currentDate.getMonth();
     var n = daysInMonth(currentDate);
+    var mPlanned = false;
+    for (var dd = 1; dd <= n; dd++) { if (dayPlanned(dateKey(y, m, dd))) { mPlanned = true; break; } }
     var todayStr = new Date().toDateString();
-    var h = '<div class="grid-scroll" id="gridScrollInner"><table class="grid-table"><thead><tr><th class="sticky-col">Equipe</th>';
+    var h = gridTopbarHTML(dateKey(y, m, 1), dateKey(y, m, n), { planned: mPlanned, okTitle: 'Mês em dia' });
+    h += '<div class="grid-scroll" id="gridScrollInner"><table class="grid-table"><thead><tr><th class="sticky-col">Equipe</th>';
     for (var d = 1; d <= n; d++) {
       var dtH = new Date(y, m, d), dowH = dtH.getDay(), keyH = dateKey(y, m, d);
       var miss = checkEssentialShifts(keyH);
       var missClass = (miss.missing06 || miss.missing14) ? 'missing-essential' : '';
-      var clsH = [dowH === 0 || dowH === 6 ? 'weekend' : '', isHoliday(keyH) ? 'holiday' : '', dtH.toDateString() === todayStr ? 'today' : '', missClass].filter(Boolean).join(' ');
+      var clsH = [dowH === 0 || dowH === 6 ? 'weekend' : '', isHoliday(keyH) ? 'holiday' : '', dtH.toDateString() === todayStr ? 'today' : '', missClass, dayHeadNoteCls(keyH)].filter(Boolean).join(' ');
       var headStyle = '';
       if (dowH === 0) {
         var sun = state.colors.SUNDAY || { color: '#ef4444', text: '#ffffff' };
         headStyle = 'background:' + sun.color + '; color:' + sun.text + ';';
       }
-      var alertIcon = (miss.missing06 || miss.missing14) ? '<span style="color:var(--danger);font-size:11px;display:block;line-height:1;margin-top:2px;" title="Falta turno essencial">⚠</span>' : '';
-      h += '<th class="' + clsH + '" style="' + headStyle + '"><span class="dnum">' + d + '</span><span class="dow" style="' + (dowH === 0 ? 'color:inherit;opacity:.9' : '') + '">' + DOW[dowH] + '</span>' + alertIcon + dayNoteMark(keyH) + '</th>';
+      var alertIcon = dayMissingChipsHTML(miss, true);
+      var nInfoM = dayWideNoteInfo(keyH);
+      var missTipM = (miss.missing06 || miss.missing14)
+        ? ((miss.missing06 && miss.missing14 ? 'Faltam turnos 06h e 14h' : ('Falta turno ' + (miss.missing06 ? '06h' : '14h'))) + ' — clique para ver alertas')
+        : '';
+      var headTitleM = nInfoM.total
+        ? ' title="' + escapeHtml(nInfoM.total + (nInfoM.total > 1 ? ' anotações do dia — clique para abrir' : ' anotação do dia — clique para abrir')) + '"'
+        : (missTipM ? ' title="' + escapeHtml(missTipM) + '"' : '');
+      h += '<th class="' + clsH + '" data-day-key="' + keyH + '"' + headTitleM + ' style="' + headStyle + '"><span class="day-num-row"><span class="dnum">' + d + '</span>' + dayNoteDotHTML(keyH) + '</span><span class="dow" style="' + (dowH === 0 ? 'color:inherit;opacity:.9' : '') + '">' + DOW[dowH] + '</span>' + alertIcon + '</th>';
     }
     h += '</tr></thead><tbody>';
     for (var i = 0; i < state.employees.length; i++) {
@@ -1080,7 +1546,9 @@
         if (s) inner += '<span class="cell-txt">' + s.label + '</span>';
         if (printTxt) inner += '<span class="cell-print">' + printTxt + '</span>';
         var fl = cellFlag(emp, key, code);
-        h += '<td class="' + cls + ' ' + fl.cls + ' ' + noteCls(emp, key) + '" data-emp="' + escapeHtml(emp) + '" data-date="' + key + '" data-print="' + printTxt + '" title="' + cellTitle(emp, key, fl.title) + '" style="' + style + '">' + inner + '</td>';
+        var isFERefM = (code === 'FE' && !isHoliday(key));
+        var cTitleM = cellTitle(emp, key, fl.title);
+        h += '<td class="' + cls + ' ' + fl.cls + ' ' + colNoteCls(key) + ' ' + noteCls(emp, key) + '" data-emp="' + escapeHtml(emp) + '" data-date="' + key + '" data-print="' + printTxt + '"' + (isFERefM ? ' data-fe-ref="1"' : '') + (cTitleM ? ' title="' + cTitleM + '"' : '') + ' style="' + style + '">' + inner + '</td>';
       }
       h += '</tr>';
     }
@@ -1090,11 +1558,6 @@
       if (s.type === 'event') h += '<div class="legend-item"><span class="legend-dot" style="background:' + s.color + ';color:' + s.text + '">' + s.label + '</span>' + s.name + '</div>';
     });
     h += '</div>';
-
-    var mPlanned = false;
-    for (var dd = 1; dd <= n; dd++) { if (dayPlanned(dateKey(y, m, dd))) { mPlanned = true; break; } }
-    var mHtml = issuesCardHTML(computeIssues(dateKey(y, m, 1), dateKey(y, m, n)), { title: 'Alertas do mês', planned: mPlanned, okTitle: 'Mês em dia' });
-    if (mHtml) h += '<div class="week-alerts">' + mHtml + '</div>';
 
     viewMonth.innerHTML = h;
     requestAnimationFrame(function () {
@@ -1143,7 +1606,7 @@
       if (di === 0 || dtH.getDate() === 1) {
         monthLabel = '<span class="dmonth">' + MONTHS[dtH.getMonth()].slice(0, 3) + '</span>';
       }
-      var alertIcon = (miss.missing06 || miss.missing14) ? '<span style="color:var(--danger);font-size:11px;display:block;line-height:1;margin-top:2px;" title="Falta turno essencial">⚠</span>' : '';
+      var alertIcon = dayMissingChipsHTML(miss, true);
       h += '<th class="' + clsH + '" style="' + headStyle + '"><span class="dnum">' + dtH.getDate() + '</span><span class="dow" style="' + (dowH === 0 ? 'color:inherit;opacity:.9' : '') + '">' + DOW[dowH] + '</span>' + monthLabel + alertIcon + '</th>';
     }
     h += '</tr></thead><tbody>';
@@ -1194,6 +1657,71 @@
     container.innerHTML = h;
   }
 
+  var summaryP3Emp = '';
+
+  function renderP3HolidayWidget(opts) {
+    opts = opts || {};
+    var todayKey = keyOf(new Date());
+    var byEmp = {};
+    state.employees.forEach(function (emp) {
+      byEmp[emp] = computeEmpHolidayCredits(emp, { todayKey: todayKey });
+    });
+
+    function empRank(emp) {
+      var info = byEmp[emp], pend = info.pending;
+      if (pend.some(function (c) { return c.status === 'expired'; })) return 0;
+      if (pend.some(function (c) { return c.status === 'soon'; })) return 1;
+      if (pend.length) return 2;
+      if (info.credits.length) return 3;
+      return 4;
+    }
+
+    if (!summaryP3Emp || state.employees.indexOf(summaryP3Emp) === -1) {
+      var sorted = state.employees.slice().sort(function (a, b) { return empRank(a) - empRank(b); });
+      summaryP3Emp = sorted[0] || '';
+    }
+
+    var chipsHtml = '<div class="p3-chips">' + state.employees.map(function (emp) {
+      var info = byEmp[emp], pend = info.pending;
+      var hasExp = pend.some(function (c) { return c.status === 'expired'; });
+      var hasSoon = pend.some(function (c) { return c.status === 'soon'; });
+      var cls = hasExp ? 'expired' : (hasSoon ? 'soon' : (pend.length ? 'ok' : ''));
+      var minDays = pend.length ? Math.min.apply(null, pend.map(function (c) { return c.daysLeft; })) : null;
+      var label = pend.length
+        ? (hasExp ? pend.length + ' · Vencido' : (pend.length + ' · ' + minDays + 'd'))
+        : (info.credits.length ? '0 (' + info.credits.length + ' agend.)' : '0');
+      return '<button type="button" class="p3-chip ' + cls + (summaryP3Emp === emp ? ' active' : '') + '" data-p3-emp="' + escapeHtml(emp) + '">' +
+        '<span class="p3-dot"></span><span>' + escapeHtml(emp) + ': ' + label + '</span></button>';
+    }).join('') + '</div>';
+
+    var selInfo = summaryP3Emp ? byEmp[summaryP3Emp] : null;
+    var detailHtml = '';
+    if (selInfo) {
+      var rows = selInfo.credits.slice().sort(function (a, b) { return a.holDate < b.holDate ? -1 : 1; });
+      if (!rows.length) {
+        detailHtml = '<div class="p3-detail"><div class="notes-empty small">Nenhum feriado trabalhado registrado para ' + escapeHtml(summaryP3Emp) + '.</div></div>';
+      } else {
+        detailHtml = '<div class="p3-detail"><div class="p3-detail-head"><span>Extrato de ' + escapeHtml(summaryP3Emp) + ' (' + rows.length + ')</span><span>Prazo máx: 60 dias</span></div>' +
+          rows.map(function (c) {
+            var pCls = 'ok', pTxt = 'Restam ' + c.daysLeft + 'd';
+            if (c.status === 'expired') { pCls = 'expired'; pTxt = 'Vencido há ' + Math.abs(c.daysLeft) + 'd'; }
+            else if (c.status === 'soon') { pCls = 'soon'; pTxt = c.daysLeft === 0 ? 'Vence hoje' : 'Vence em ' + c.daysLeft + 'd'; }
+            else if (c.status === 'used') { pCls = 'used'; pTxt = '✓ FE em ' + fmtShort(c.usedBy); }
+            else if (c.status === 'used_late') { pCls = 'expired'; pTxt = '⚠ FE em ' + fmtShort(c.usedBy) + ' (>60d)'; }
+            var gotoDate = c.usedBy || todayKey;
+            var gotoLabel = c.usedBy ? 'Ver FE ›' : 'Agendar ›';
+            return '<div class="p3-row">' +
+              '<div class="p3-row-main"><div class="p3-row-title">' + fmtShort(c.holDate) + ' · ' + escapeHtml(c.holName) + '</div>' +
+              '<div class="p3-row-sub">Prazo máximo (60d): ' + fmtFullDate(c.limitDate) + '</div></div>' +
+              '<div class="p3-row-right"><span class="p3-pill ' + pCls + '">' + pTxt + '</span>' +
+              '<button type="button" class="p3-jump" data-p3-goto="' + gotoDate + '">' + gotoLabel + '</button></div>' +
+            '</div>';
+          }).join('') + '</div>';
+      }
+    }
+    return chipsHtml + detailHtml;
+  }
+
   function renderSummary() {
     if (!state.employees || state.employees.length === 0) {
       viewSummary.innerHTML = emptyStateHTML('Nenhum colaborador cadastrado.');
@@ -1201,19 +1729,10 @@
     }
     var y = currentDate.getFullYear(), m = currentDate.getMonth();
     var n = daysInMonth(currentDate);
-    var balances = getHolidayBalances();
-    var balChips = state.employees.map(function (emp) {
-      var b = balances[emp];
-      var bg = '#f1f5f9', c = '#475569';
-      if (b > 0) { bg = '#dcfce7'; c = '#166534'; }
-      if (b < 0) { bg = '#fee2e2'; c = '#991b1b'; }
-      return '<span class="bd-chip" style="background:' + bg + ';color:' + c + ';border:1px solid rgba(0,0,0,.05)">' + emp + ': ' + b + '</span>';
-    }).join('');
-    var h = '<div class="summary"><div class="summary-card" style="background:linear-gradient(135deg,#eff6ff,#f8fafc);border-color:#bfdbfe">' +
-      '<div class="section-head" style="margin-bottom:10px"><div class="section-icon" style="background:#dbeafe;color:#1e40af"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg></div>' +
-      '<h3 class="section-title" style="color:#1e3a8a">Saldo de Folgas de Feriado</h3></div>' +
-      '<p style="font-size:12.5px;color:#64748b;margin:-4px 0 14px">+1 ao trabalhar em feriado · −1 ao usar FE em dia útil</p>' +
-      '<div class="bd">' + balChips + '</div></div>';
+    var h = '<div class="summary"><div class="summary-card">' +
+      '<div class="section-head" style="margin-bottom:10px"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>' +
+      '<div><h3 class="section-title" style="margin:0">Controle de Folgas de Feriado (Prazo 60 dias)</h3><div style="font-size:12px;color:var(--muted);margin-top:2px">FIFO do mais antigo · Alerta amarelo com ≤15 dias · Clique no colaborador</div></div></div>' +
+      renderP3HolidayWidget() + '</div>';
 
     for (var i = 0; i < state.employees.length; i++) {
       var emp = state.employees[i];
@@ -1222,7 +1741,7 @@
         var code = (state.schedule[dateKey(y, m, j)] || {})[emp];
         if (!code) continue;
         if (code === 'D' || code === 'F6') folga++;
-        else if (code === 'F' || code === 'x' || code === 'FE') ferias++;
+        else if (!isWorkShift(code)) ferias++;
         else if (isWorkShift(code)) { work++; counts[code] = (counts[code] || 0) + 1; }
       }
       var chipsHtml = Object.keys(counts).sort().map(function (c) {
@@ -1249,99 +1768,136 @@
     viewSummary.innerHTML = h;
   }
 
+  var settingsCat = 'team';
+
   function renderSettings() {
-    var h = '';
-    h += `<div class="settings-section full" style="background:linear-gradient(135deg,#f8fafc,#f1f5f9);border-color:#e2e8f0">
-      <div class="section-head">
-        <div class="section-icon" style="background:#e2e8f0;color:#475569"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
-        <h3 class="section-title">Conta e Equipe</h3>
-      </div>
-      <div class="settings-row"><label>Líder logado</label><span style="font-weight:600;font-size:13px;">${currentUser.email}</span></div>
-      <div class="settings-row"><label>Time atual</label><span style="font-weight:600;font-size:13px;">${currentTeam.name}</span></div>
-      <div style="display:flex;gap:10px;margin-top:15px;">
-        <button class="danger-btn neutral" style="flex:1;" onclick="window.changeTeam()">Trocar de Time</button>
-        <button class="danger-btn" style="flex:1;" onclick="window.doLogout()">Sair da Conta</button>
-      </div>
-    </div>`;
-
-    h += '<div class="settings-section full">' +
-      '<div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></div><h3 class="section-title">Geral</h3></div>' +
-      '<div class="settings-row"><label>Nome do time</label><input type="text" class="team-name-input" id="teamNameInput" value="' + state.teamName.replace(/"/g, '&quot;') + '" style="max-width:280px;flex:1"></div>' +
-      '<div class="settings-row"><label>Tema (neste dispositivo)</label><select id="themeSelect">' +
-        [['auto', 'Automático (sistema)'], ['light', 'Claro'], ['dark', 'Escuro']].map(function (o) { return '<option value="' + o[0] + '" ' + (getThemePref() === o[0] ? 'selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select></div>' +
-      '<div class="settings-row"><label>Sincronização</label><span id="storageStatus" style="font-size:12px;font-weight:700;padding:6px 12px;border-radius:20px;background:#f1f5f9;color:#475569">—</span></div>' +
-      '<div class="settings-row"><label>Forçar envio à nuvem</label><button class="danger-btn neutral" id="forceSyncBtn">Sincronizar agora</button></div></div>';
-
-    h += '<div class="settings-section"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div><h3 class="section-title">Colaboradores</h3></div><div class="edit-list" id="employeeList">';
-    state.employees.forEach(function (emp) {
-      h += '<div class="edit-row" data-emp="' + emp.replace(/"/g, '&quot;') + '"><input type="text" class="name-input emp-name" value="' + emp.replace(/"/g, '&quot;') + '" placeholder="Nome"><button class="row-delete" data-del-emp="' + emp.replace(/"/g, '&quot;') + '" title="Remover"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div>';
-    });
-    h += '</div><button class="add-btn" id="addEmployeeBtn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5v14"/></svg> Adicionar colaborador</button></div>';
-
+    var y = currentDate.getFullYear(), m = currentDate.getMonth();
+    var monthLabel = MONTHS[m] + ' ' + y;
+    var teamDisplay = (currentTeam && currentTeam.name) ? currentTeam.name : (state.teamName || 'Equipe');
     var workIds = Object.keys(state.shifts).filter(function (k) { return state.shifts[k].type === 'work'; });
     workIds.sort(function (a, b) { return parseTime(state.shifts[a].start) - parseTime(state.shifts[b].start); });
-
-    h += '<div class="settings-section"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><h3 class="section-title">Turnos de Trabalho</h3></div><div class="edit-list" id="workShiftList">';
-    workIds.forEach(function (id) {
-      var s = state.shifts[id];
-      h += '<div class="edit-row" data-shift="' + id + '" data-type="work"><input type="color" class="color-picker shift-color" value="' + s.color + '" title="Cor"><input type="text" class="label-input shift-label" value="' + s.label.replace(/"/g, '&quot;') + '" maxlength="4" title="Rótulo"><input type="time" class="time-input shift-start" value="' + s.start + '" title="Início"><span class="arrow">→</span><input type="time" class="time-input shift-end" value="' + s.end + '" title="Fim"><button class="row-delete" data-del-shift="' + id + '" title="Remover"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div>';
-    });
-    h += '</div><button class="add-btn" id="addWorkShiftBtn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5v14"/></svg> Adicionar turno</button></div>';
-
     var eventIds = Object.keys(state.shifts).filter(function (k) { return state.shifts[k].type === 'event'; });
-    h += '<div class="settings-section"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82Z"/><line x1="7" x2="7.01" y1="7" y2="7"/></svg></div><h3 class="section-title">Eventos e Folgas</h3></div><div class="edit-list" id="eventShiftList">';
-    eventIds.forEach(function (id) {
-      var s = state.shifts[id];
-      h += '<div class="edit-row" data-shift="' + id + '" data-type="event"><input type="color" class="color-picker shift-color" value="' + s.color + '" title="Cor"><input type="text" class="label-input shift-label" value="' + s.label.replace(/"/g, '&quot;') + '" maxlength="4" title="Rótulo"><input type="text" class="name-input shift-name-input" value="' + s.name.replace(/"/g, '&quot;') + '" placeholder="Nome do evento" title="Nome"><button class="row-delete" data-del-shift="' + id + '" title="Remover"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div>';
-    });
-    h += '</div><button class="add-btn" id="addEventBtn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5v14"/></svg> Adicionar evento</button></div>';
+    var holKeys = Object.keys(state.holidays || {}).sort();
 
-    h += '<div class="settings-section full" style="background:linear-gradient(135deg,#eff6ff,#f8fafc);border-color:#bfdbfe"><div class="section-head"><div class="section-icon" style="background:#dbeafe;color:#1e40af"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div><h3 class="section-title" style="color:#1e3a8a">Automação</h3></div><p style="font-size:12.5px;color:#64748b;margin:-4px 0 12px">Preenche o mês com os horários padrão (Seg a Sáb). Domingos e folgas ficam em branco.</p><div class="sub-section-title">Turno padrão por colaborador</div>';
-    state.employees.forEach(function (emp) {
-      var cur = state.defaultShift[emp] || '';
-      var opts = workIds.map(function (id) { return '<option value="' + id + '" ' + (id === cur ? 'selected' : '') + '>' + state.shifts[id].name + '</option>'; }).join('');
-      h += '<div class="settings-row"><label>' + emp + '</label><select class="def-shift" data-emp="' + emp.replace(/"/g, '&quot;') + '">' + opts + '</select></div>';
-    });
-    h += '<button class="btn-auto" id="btnAuto" style="margin-top:14px"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Gerar Escala do Mês</button></div>';
+    var navItems = [
+      { id: 'team', label: 'Equipe & Turnos', badge: state.employees.length, icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>' },
+      { id: 'rules', label: 'Regras & Feriados', badge: holKeys.length || '', icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>' },
+      { id: 'general', label: 'Conta & Geral', badge: '', icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' },
+      { id: 'backup', label: 'Backup & Perigo', badge: '', icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5M3 12a9 3 0 0 0 18 0"/></svg>' }
+    ];
 
-    var rule = state.sundayRule;
-    h += '<div class="settings-section full"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg></div><h3 class="section-title">Regras de Escala</h3></div>' +
-      '<div class="settings-row"><label>Máximo de colaboradores no domingo</label><select class="sun-rule-config" data-key="maxWorkers">' + [1, 2, 3, 4, 5].map(function (v) { return '<option value="' + v + '" ' + (rule.maxWorkers == v ? 'selected' : '') + '>' + v + '</option>'; }).join('') + '</select></div>' +
-      '<div class="settings-row"><label>Máximo de domingos consecutivos</label><select class="sun-rule-config" data-key="maxConsecutive">' + [1, 2, 3, 4].map(function (v) { return '<option value="' + v + '" ' + (rule.maxConsecutive == v ? 'selected' : '') + '>' + v + ' Domingo(s)</option>'; }).join('') + '</select></div>' +
-      '<div class="settings-row"><label>Máximo de dias seguidos de trabalho</label><select class="limit-config" data-key="maxConsecutiveDays">' + [0, 5, 6, 7].map(function (v) { return '<option value="' + v + '" ' + (getMaxRun() === v ? 'selected' : '') + '>' + (v === 0 ? 'Não verificar' : v + ' dias') + '</option>'; }).join('') + '</select></div>' +
-      '<div class="settings-row"><label>Cor do cabeçalho de Domingo</label><input type="color" class="color-picker sunday-color" value="' + (state.colors.SUNDAY ? state.colors.SUNDAY.color : '#ef4444') + '"></div>' +
-      '<div class="sub-section-title">Escala semanal por colaborador</div>';
-    state.employees.forEach(function (emp) {
-      var cur = getEmployeeScale(emp);
-      h += '<div class="settings-row"><label>' + emp + '</label><select class="emp-scale" data-emp="' + emp.replace(/"/g, '&quot;') + '"><option value="6x1" ' + (cur === '6x1' ? 'selected' : '') + '>6x1 — 1 folga/semana</option><option value="5x2" ' + (cur === '5x2' ? 'selected' : '') + '>5x2 — 2 folgas/semana</option><option value="off" ' + (cur === 'off' ? 'selected' : '') + '>Não verificar</option></select></div>';
-    });
-    h += '</div>';
+    var navHtml = '<aside class="settings-nav"><div class="settings-nav-list">' +
+      navItems.map(function (it) {
+        return '<button type="button" class="settings-nav-btn' + (settingsCat === it.id ? ' active' : '') + '" data-scat="' + it.id + '">' +
+          it.icon + '<span>' + it.label + '</span>' +
+          (it.badge !== '' ? '<span class="snav-badge">' + it.badge + '</span>' : '') +
+        '</button>';
+      }).join('') +
+      '</div><div class="settings-nav-foot"><span class="sync-pill" data-sync-pill="1">—</span></div></aside>';
 
-    h += '<div class="settings-section"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></div><h3 class="section-title">Feriados</h3></div>';
-    var sorted = Object.keys(state.holidays).sort();
-    if (sorted.length === 0) h += '<p style="font-size:12.5px;color:var(--muted);padding:8px 0">Nenhum feriado cadastrado.</p>';
-    h += '<div class="holiday-list">';
-    sorted.forEach(function (k) {
-      var p = k.split('-');
-      h += '<div class="holiday-item"><span>' + p[2] + '/' + p[1] + '/' + p[0] + ' — ' + state.holidays[k] + '</span><button data-del-hol="' + k + '">remover</button></div>';
-    });
-    h += '</div><div class="add-holiday"><input type="date" id="newHolDate"><input type="text" id="newHolName" placeholder="Nome do feriado"><button id="addHolBtn">Adicionar</button></div></div>';
+    var panel = '';
+    if (settingsCat === 'team') {
+      panel += '<div class="settings-section">' +
+        '<div class="settings-sec-head-split">' +
+          '<div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>' +
+          '<div><h3 class="section-title">Colaboradores & Automação</h3><div style="font-size:12px;color:var(--muted)">Nome, turno padrão (Seg–Sáb) e escala semanal em um só lugar.</div></div></div>' +
+          '<button type="button" class="btn-auto settings-btn-auto-sm" id="btnAuto"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Gerar ' + MONTHS[m] + '</button>' +
+        '</div>' +
+        (state.employees.length ? '<div class="emp-head-labels"><span>Colaborador</span><span>Turno padrão</span><span>Escala semanal</span><span></span></div>' : '') +
+        '<div class="edit-list" id="employeeList">';
 
-    h += '<div class="settings-section full">' +
-      '<div class="section-head">' +
-        '<div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5M3 12a9 3 0 0 0 18 0"/></svg></div>' +
-        '<h3 class="section-title">Dados / Backup</h3>' +
-      '</div>' +
-      '<div class="settings-row"><label>Exportar backup completo</label><button class="danger-btn neutral" id="downloadCsvBtn">Baixar CSV</button></div>' +
-      '<div class="settings-row"><label>Importar backup</label>' +
-        '<button class="danger-btn success" id="importBtn">Importar</button>' +
-        '<input type="file" id="importFile" accept=".csv,text/csv" style="display:none">' +
-      '</div>' +
-      '<div class="settings-row"><label>Limpar escala do mês atual</label><button class="danger-btn" id="clearMonthBtn">Limpar</button></div>' +
-      '<div class="settings-row"><label>Apagar todos os dados</label><button class="danger-btn" id="resetBtn">Apagar</button></div>' +
-    '</div>';
+      state.employees.forEach(function (emp) {
+        var curDef = state.defaultShift[emp] || '';
+        var defOpts = workIds.map(function (id) { return '<option value="' + escapeHtml(id) + '" ' + (id === curDef ? 'selected' : '') + '>' + escapeHtml(state.shifts[id].name) + '</option>'; }).join('');
+        var curScale = getEmployeeScale(emp);
+        panel += '<div class="edit-row emp-unified-row" data-emp="' + escapeHtml(emp) + '">' +
+          '<div class="emp-main"><span class="emp-avatar">' + escapeHtml(initialsOf(emp)) + '</span>' +
+          '<input type="text" class="name-input emp-name" value="' + escapeHtml(emp) + '" placeholder="Nome"></div>' +
+          '<select class="def-shift" data-emp="' + escapeHtml(emp) + '" title="Turno padrão">' + defOpts + '</select>' +
+          '<select class="emp-scale" data-emp="' + escapeHtml(emp) + '" title="Escala semanal">' +
+            '<option value="6x1" ' + (curScale === '6x1' ? 'selected' : '') + '>6x1 (1 folga)</option>' +
+            '<option value="5x2" ' + (curScale === '5x2' ? 'selected' : '') + '>5x2 (2 folgas)</option>' +
+            '<option value="off" ' + (curScale === 'off' ? 'selected' : '') + '>Não verificar</option>' +
+          '</select>' +
+          '<button type="button" class="row-delete" data-del-emp="' + escapeHtml(emp) + '" title="Remover"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>' +
+        '</div>';
+      });
+      panel += '</div><button type="button" class="add-btn" id="addEmployeeBtn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5v14"/></svg> Adicionar colaborador</button></div>';
 
-    viewSettings.innerHTML = h;
+      panel += '<div class="settings-two-col">';
+      panel += '<div class="settings-section"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><h3 class="section-title">Turnos de Trabalho</h3></div><div class="edit-list" id="workShiftList">';
+      workIds.forEach(function (id) {
+        var s = state.shifts[id];
+        panel += '<div class="edit-row" data-shift="' + escapeHtml(id) + '" data-type="work"><input type="color" class="color-picker shift-color" value="' + s.color + '" title="Cor"><input type="text" class="label-input shift-label" value="' + escapeHtml(s.label) + '" maxlength="4" title="Rótulo"><input type="time" class="time-input shift-start" value="' + s.start + '" title="Início"><span class="arrow">→</span><input type="time" class="time-input shift-end" value="' + s.end + '" title="Fim"><button type="button" class="row-delete" data-del-shift="' + escapeHtml(id) + '" title="Remover"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div>';
+      });
+      panel += '</div><button type="button" class="add-btn" id="addWorkShiftBtn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5v14"/></svg> Adicionar turno</button></div>';
+
+      panel += '<div class="settings-section"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82Z"/><line x1="7" x2="7.01" y1="7" y2="7"/></svg></div><h3 class="section-title">Eventos e Folgas</h3></div><div class="edit-list" id="eventShiftList">';
+      eventIds.forEach(function (id) {
+        var s = state.shifts[id];
+        panel += '<div class="edit-row" data-shift="' + escapeHtml(id) + '" data-type="event"><input type="color" class="color-picker shift-color" value="' + s.color + '" title="Cor"><input type="text" class="label-input shift-label" value="' + escapeHtml(s.label) + '" maxlength="4" title="Rótulo"><input type="text" class="name-input shift-name-input" value="' + escapeHtml(s.name) + '" placeholder="Nome do evento" title="Nome"><button type="button" class="row-delete" data-del-shift="' + escapeHtml(id) + '" title="Remover"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div>';
+      });
+      panel += '</div><button type="button" class="add-btn" id="addEventBtn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5v14"/></svg> Adicionar evento</button></div>';
+      panel += '</div>';
+    } else if (settingsCat === 'rules') {
+      var rule = state.sundayRule;
+      panel += '<div class="settings-section"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg></div><h3 class="section-title">Regras de Escala</h3></div>' +
+        '<div class="settings-row"><label>Máximo de colaboradores no domingo</label><select class="sun-rule-config" data-key="maxWorkers">' + [1, 2, 3, 4, 5].map(function (v) { return '<option value="' + v + '" ' + (rule.maxWorkers == v ? 'selected' : '') + '>' + v + '</option>'; }).join('') + '</select></div>' +
+        '<div class="settings-row"><label>Máximo de domingos consecutivos</label><select class="sun-rule-config" data-key="maxConsecutive">' + [1, 2, 3, 4].map(function (v) { return '<option value="' + v + '" ' + (rule.maxConsecutive == v ? 'selected' : '') + '>' + v + ' Domingo(s)</option>'; }).join('') + '</select></div>' +
+        '<div class="settings-row"><label>Máximo de dias seguidos de trabalho</label><select class="limit-config" data-key="maxConsecutiveDays">' + [0, 5, 6, 7].map(function (v) { return '<option value="' + v + '" ' + (getMaxRun() === v ? 'selected' : '') + '>' + (v === 0 ? 'Não verificar' : v + ' dias') + '</option>'; }).join('') + '</select></div>' +
+        '<div class="settings-row"><label>Cor do cabeçalho de Domingo</label><input type="color" class="color-picker sunday-color" value="' + (state.colors.SUNDAY ? state.colors.SUNDAY.color : '#ef4444') + '"></div>' +
+        '<p class="settings-hint">💡 Intervalo mínimo de 11h entre turnos e cobertura dos turnos essenciais (06:00 e 14:00) são verificados automaticamente. A escala individual (6x1/5x2) fica em <strong>Equipe & Turnos</strong>.</p>' +
+        '</div>';
+
+      panel += '<div class="settings-section"><div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></div><h3 class="section-title">Feriados</h3></div>';
+      if (holKeys.length === 0) panel += '<p style="font-size:12.5px;color:var(--muted);padding:6px 0">Nenhum feriado cadastrado.</p>';
+      panel += '<div class="holiday-list">';
+      holKeys.forEach(function (k) {
+        var p = k.split('-');
+        panel += '<div class="holiday-item"><span>' + p[2] + '/' + p[1] + '/' + p[0] + ' — ' + escapeHtml(state.holidays[k]) + '</span><button type="button" data-del-hol="' + k + '">remover</button></div>';
+      });
+      panel += '</div><div class="add-holiday"><input type="date" id="newHolDate"><input type="text" id="newHolName" placeholder="Nome do feriado"><button type="button" id="addHolBtn">Adicionar</button></div></div>';
+    } else if (settingsCat === 'general') {
+      var emailStr = currentUser ? currentUser.email : '';
+      var curTheme = getThemePref();
+      panel += '<div class="settings-section">' +
+        '<div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div><h3 class="section-title">Conta e Equipe</h3></div>' +
+        '<div class="account-banner">' +
+          '<div class="account-user">' +
+            '<span class="account-avatar">' + escapeHtml(initialsOf(emailStr.split('@')[0])) + '</span>' +
+            '<div class="account-meta"><div class="account-email">' + escapeHtml(emailStr) + '</div><span class="account-team-pill" id="settingsTeamBadge">' + escapeHtml(teamDisplay) + '</span></div>' +
+          '</div>' +
+          '<div class="account-actions">' +
+            '<button type="button" class="danger-btn neutral" data-settings-act="change-team">Trocar de Time</button>' +
+            '<button type="button" class="danger-btn" data-settings-act="logout">Sair da Conta</button>' +
+          '</div>' +
+        '</div></div>';
+
+      panel += '<div class="settings-section">' +
+        '<div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></div><h3 class="section-title">Preferências e Nuvem</h3></div>' +
+        '<div class="settings-row"><label for="teamNameInput">Nome do time</label><input type="text" class="team-name-input" id="teamNameInput" value="' + escapeHtml(teamDisplay) + '"></div>' +
+        '<div class="settings-row"><label>Tema (neste dispositivo)</label><div class="theme-seg">' +
+          [['auto', 'Auto'], ['light', 'Claro'], ['dark', 'Escuro']].map(function (o) {
+            return '<button type="button" class="theme-seg-btn' + (curTheme === o[0] ? ' active' : '') + '" data-theme-btn="' + o[0] + '">' + o[1] + '</button>';
+          }).join('') +
+        '</div></div>' +
+        '<div class="settings-row"><label>Sincronização na nuvem</label><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="sync-pill" id="storageStatus" data-sync-pill="1">—</span><button type="button" class="danger-btn neutral" id="forceSyncBtn">Sincronizar</button></div></div>' +
+        '</div>';
+    } else {
+      panel += '<div class="settings-section">' +
+        '<div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5M3 12a9 3 0 0 0 18 0"/></svg></div><h3 class="section-title">Backup e Restauração (CSV)</h3></div>' +
+        '<div class="settings-row"><label>Exportar escala de ' + monthLabel + ' e configurações</label><button type="button" class="danger-btn neutral" id="downloadCsvBtn">Baixar CSV</button></div>' +
+        '<div class="settings-row"><label>Importar arquivo CSV de backup</label><button type="button" class="danger-btn success" id="importBtn">Importar CSV</button><input type="file" id="importFile" accept=".csv,text/csv" style="display:none"></div>' +
+        '</div>';
+
+      panel += '<div class="settings-section danger-zone-card">' +
+        '<div class="section-head"><div class="section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/></svg></div><h3 class="section-title">Zona de Perigo</h3></div>' +
+        '<div class="settings-row"><label>Limpar escala de <strong>' + monthLabel + '</strong></label><button type="button" class="danger-btn" id="clearMonthBtn">Limpar ' + MONTHS[m].slice(0, 3) + '</button></div>' +
+        '<div class="settings-row"><label>Apagar todos os dados deste time</label><button type="button" class="danger-btn" id="resetBtn">Apagar tudo</button></div>' +
+        '</div>';
+    }
+
+    viewSettings.innerHTML = '<div class="settings-shell">' + navHtml + '<div class="settings-panel">' + panel + '</div></div>';
     updateStorageStatus();
   }
 
@@ -1355,9 +1911,12 @@
       case 'notes': renderNotes(); break;
     }
     updateBadges();
+    if (drawerState.open) renderNotesDrawer();
   }
 
   function switchToView(view) {
+    hideFEHoverTip();
+    if (view !== 'week' && view !== 'month') closeNotesDrawer();
     activeView = view;
     document.querySelectorAll('.tab').forEach(function (t) { t.classList.toggle('active', t.dataset.view === view); });
     document.querySelectorAll('.view').forEach(function (v) { v.classList.toggle('active', v.id === 'view-' + view); });
@@ -1365,23 +1924,151 @@
   }
 
   var sheetCtx = null;
-  function buildShiftBtn(code, cur, emp, dateStr) {
+  function shortCellIssue(issue, targetDate) {
+    if (!issue) return '';
+    if (issue.type === 'rest') {
+      var d = new Date(targetDate + 'T00:00:00');
+      var other = new Date(d);
+      if (issue.date === targetDate) other.setDate(d.getDate() - 1);
+      else other.setDate(d.getDate() + 1);
+      return '⚠ <11h c/ ' + DOW[other.getDay()];
+    }
+    if (issue.type === 'sunday') return '⚠ Dom. lotado';
+    if (issue.type === 'sundayc') return '⚠ Dom. seguidos';
+    if (issue.type === 'run') return '⚠ Dias seguidos';
+    if (issue.type === 'balance') return '⚠ Sem saldo FE';
+    if (issue.type === 'fe_exp') return '⚠ Prazo >60d';
+    if (issue.type === 'fe_soon') return '⚠ Vence ≤15d';
+    return '⚠ Regra';
+  }
+
+  function buildWorkShiftBtn(code, cur, emp, dateStr) {
     var s = getShift(code); if (!s) return '';
-    var active = code === cur ? 'active' : '';
-    var invalid = false, reason = '';
-    if (isWorkShift(code) && code !== cur) {
-      var ws = getWarningsForCell(emp, dateStr, code);
-      if (ws.length) { invalid = true; reason = ws[0]; }
+    var active = code === cur;
+    var invalid = false, shortReason = '', fullReason = '';
+    if (!active) {
+      var issues = getCellIssues(emp, dateStr, code);
+      if (issues.length) {
+        invalid = true;
+        shortReason = shortCellIssue(issues[0], dateStr);
+        fullReason = issues.map(function (i) { return i.msg; }).join(' • ');
+      }
     }
+    var subHtml = invalid
+      ? '<span class="shift-reason">' + escapeHtml(shortReason) + '</span>'
+      : '<span class="shift-name">' + escapeHtml(s.name) + '</span>';
+    return '<button type="button" class="shift-btn ' + (active ? 'active ' : '') + (invalid ? 'invalid' : '') + '" data-code="' + escapeHtml(code) + '" style="--c:' + s.color + ';--t:' + s.text + '" title="' + escapeHtml(fullReason) + '">' +
+      '<span class="shift-code">' + (active ? '✓ ' : '') + escapeHtml(s.label) + '</span>' +
+      subHtml + '</button>';
+  }
+
+  function buildEventPillBtn(code, cur, emp, dateStr) {
+    var s = getShift(code); if (!s) return '';
+    var active = code === cur;
     var nameDisplay = s.name;
+    var subText = '', warnShort = '', fullReason = '';
     if (code === 'FE') {
-      var b = getHolidayBalances(dateStr, dateStr, emp);
-      nameDisplay = 'Saldo: ' + b[emp];
+      var sim = computeEmpHolidayCredits(emp, active ? {} : { excludeDate: dateStr });
+      if (active && sim.pairMap[dateStr]) {
+        var cp = sim.pairMap[dateStr];
+        nameDisplay = 'Saldo: ' + sim.pending.length;
+        if (cp.lateUsed) warnShort = '⚠ Fora 60d (' + fmtShort(cp.holDate) + ')';
+        else subText = 'Ref. ' + fmtShort(cp.holDate) + ' · até ' + fmtShort(cp.limitDate);
+      } else {
+        var elig = sim.pending.filter(function (c) { return c.holDate <= dateStr; });
+        if (elig.length) {
+          var c0 = elig[0];
+          nameDisplay = 'Saldo: ' + elig.length + ' · até ' + fmtShort(c0.limitDate);
+          if (dateStr > c0.limitDate) warnShort = '⚠ Passa 60d (' + fmtShort(c0.holDate) + ')';
+          else subText = 'Abate ' + fmtShort(c0.holDate) + ' (' + c0.holName + ')';
+        } else {
+          nameDisplay = 'Saldo: 0';
+          if (!active) {
+            var issues0 = getCellIssues(emp, dateStr, code);
+            if (issues0.length) { warnShort = shortCellIssue(issues0[0], dateStr); fullReason = issues0[0].msg; }
+          }
+        }
+      }
+      if (!fullReason && !active) {
+        var allIss = getCellIssues(emp, dateStr, code);
+        if (allIss.length) fullReason = allIss.map(function (i) { return i.msg; }).join(' • ');
+      }
     }
-    return '<button class="shift-btn ' + active + ' ' + (invalid ? 'invalid' : '') + '" data-code="' + code + '" style="--c:' + s.color + ';--t:' + s.text + '" title="' + (invalid ? reason.replace(/"/g, '&quot;') : '') + '"><span class="shift-code">' + s.label + '</span><span class="shift-name">' + nameDisplay + '</span>' + (invalid ? '<span class="shift-reason">' + (reason.length > 40 ? reason.slice(0, 40) + '…' : reason) + '</span>' : '') + '</button>';
+    return '<button type="button" class="event-pill-btn' + (active ? ' active' : '') + '" data-code="' + escapeHtml(code) + '" title="' + escapeHtml(fullReason) + '">' +
+      '<span class="ev-badge" style="background:' + s.color + ';color:' + s.text + '">' + escapeHtml(s.label) + '</span>' +
+      '<span class="ev-info"><span class="ev-name">' + (active ? '✓ ' : '') + escapeHtml(nameDisplay) + '</span>' +
+      (warnShort ? '<span class="ev-warn">' + escapeHtml(warnShort) + '</span>' : (subText ? '<span class="ev-sub">' + escapeHtml(subText) + '</span>' : '')) +
+      '</span></button>';
+  }
+
+  function renderSheetNeighbors(emp, dateStr) {
+    var el = $('sheetNeighbors');
+    if (!el) return;
+    var d = new Date(dateStr + 'T00:00:00');
+    var prev = new Date(d); prev.setDate(d.getDate() - 1);
+    var next = new Date(d); next.setDate(d.getDate() + 1);
+    function lblOf(dt) {
+      var k = keyOf(dt);
+      var code = (state.schedule[k] || {})[emp] || '';
+      var s = getShift(code);
+      return DOW[dt.getDay()] + ' ' + (s ? s.label : '—');
+    }
+    el.innerHTML =
+      '<button type="button" class="sn-day" data-jump-date="' + keyOf(prev) + '" title="Ir para o dia anterior">' + escapeHtml(lblOf(prev)) + '</button>' +
+      '<span class="sn-arr">→</span>' +
+      '<span class="sn-day current">' + escapeHtml(lblOf(d)) + '</span>' +
+      '<span class="sn-arr">→</span>' +
+      '<button type="button" class="sn-day" data-jump-date="' + keyOf(next) + '" title="Ir para o próximo dia">' + escapeHtml(lblOf(next)) + '</button>';
+  }
+
+  function renderSheetRuleHint(emp, dateStr, cur, workIds) {
+    var box = $('sheetRuleHint');
+    if (!box) return;
+    var feRef = (cur === 'FE') ? getFERefInfo(emp, dateStr) : null;
+    if (cur) {
+      var curIssues = getCellIssues(emp, dateStr, cur);
+      if (curIssues.length) {
+        var hasErr = curIssues.some(function (i) { return i.sev === 'error'; });
+        box.className = 'sheet-rule-box ' + (hasErr ? 'error' : 'warn');
+        var prefix = (feRef && feRef.holDate)
+          ? '<strong>🏖 Ref. ' + escapeHtml(feRef.holLabel) + '</strong> — '
+          : '';
+        box.innerHTML = prefix + '<strong>⚠ Conflito atual:</strong> ' + escapeHtml(curIssues.map(function (i) { return i.msg; }).join(' • '));
+        return;
+      }
+    }
+    if (feRef) {
+      box.className = 'sheet-rule-box fe-ref';
+      box.innerHTML = '<strong>🏖 Folga de Feriado:</strong> Ref. <strong>' + escapeHtml(feRef.holLabel) + '</strong> · ' + escapeHtml(feRef.sub);
+      return;
+    }
+    var restLabels = [], otherMsg = '';
+    workIds.forEach(function (id) {
+      if (id === cur) return;
+      var issues = getCellIssues(emp, dateStr, id);
+      if (!issues.length) return;
+      var rest = issues.filter(function (i) { return i.type === 'rest'; })[0];
+      if (rest) {
+        var s = getShift(id);
+        if (s) restLabels.push(s.label);
+      } else if (!otherMsg) {
+        otherMsg = issues[0].msg;
+      }
+    });
+    if (restLabels.length) {
+      box.className = 'sheet-rule-box info';
+      box.innerHTML = '<strong>💡 Descanso de 11h:</strong> turnos <strong>' + escapeHtml(restLabels.join(', ')) + '</strong> conflitam com dia vizinho.';
+    } else if (otherMsg) {
+      box.className = 'sheet-rule-box info';
+      box.innerHTML = '<strong>💡 Regra:</strong> ' + escapeHtml(otherMsg);
+    } else {
+      box.className = 'sheet-rule-box hidden';
+      box.innerHTML = '';
+    }
   }
 
   function openSheet(emp, dateStr) {
+    hideFEHoverTip();
     sheetCtx = { emp: emp, date: dateStr };
     var d = new Date(dateStr + 'T00:00:00');
     sheetTitle.textContent = emp;
@@ -1393,13 +2080,21 @@
 
     if (workIds.length) {
       workShiftGrid.style.display = 'grid'; workSectionTitle.style.display = 'block';
-      workShiftGrid.innerHTML = workIds.map(function (id) { return buildShiftBtn(id, cur, emp, dateStr); }).join('');
+      workShiftGrid.innerHTML = workIds.map(function (id) { return buildWorkShiftBtn(id, cur, emp, dateStr); }).join('');
     } else { workShiftGrid.style.display = 'none'; workSectionTitle.style.display = 'none'; }
 
     if (eventIds.length) {
       eventShiftGrid.style.display = 'grid'; eventSectionTitle.style.display = 'block';
-      eventShiftGrid.innerHTML = eventIds.map(function (id) { return buildShiftBtn(id, cur, emp, dateStr); }).join('');
+      eventShiftGrid.innerHTML = eventIds.map(function (id) { return buildEventPillBtn(id, cur, emp, dateStr); }).join('');
     } else { eventShiftGrid.style.display = 'none'; eventSectionTitle.style.display = 'none'; }
+
+    if (sheetClear) sheetClear.style.display = cur ? 'inline-flex' : 'none';
+    renderSheetNeighbors(emp, dateStr);
+    renderSheetRuleHint(emp, dateStr, cur, workIds);
+
+    var dayNoteItems = getNotes(dateStr).filter(function (n) { return n.emp === emp || !n.emp; });
+    sheetNoteState.editingId = null;
+    sheetNoteState.composing = (window.innerWidth >= 768 && dayNoteItems.length === 0);
 
     $('noteScope').innerHTML = '<option value="emp">Só ' + escapeHtml(emp) + '</option><option value="day">Dia inteiro (time)</option>';
     $('noteInput').value = ''; $('noteImportant').checked = false;
@@ -1407,20 +2102,56 @@
     sheet.classList.add('open'); sheetBackdrop.classList.add('open');
   }
 
-  function closeSheet() { sheet.classList.remove('open'); sheetBackdrop.classList.remove('open'); sheetCtx = null; }
+  function closeSheet() {
+    sheet.classList.remove('open');
+    sheetBackdrop.classList.remove('open');
+    sheetCtx = null;
+    sheetNoteState.editingId = null;
+    sheetNoteState.composing = false;
+  }
 
   function commitShift(emp, date, code) {
     if (!state.schedule[date]) state.schedule[date] = {};
     if (code) state.schedule[date][emp] = code;
     else delete state.schedule[date][emp];
     if (Object.keys(state.schedule[date]).length === 0) delete state.schedule[date];
+    if (isHoliday(date)) syncAllAutoFENotes();
+    else syncAutoFENotes(emp);
     save(); closeSheet(); renderActive();
     toast(code ? 'Turno aplicado' : 'Célula limpa');
+  }
+
+  function commitShiftAllTeam(date, code) {
+    if (!state.schedule[date]) state.schedule[date] = {};
+    state.employees.forEach(function (emp) {
+      state.schedule[date][emp] = code;
+    });
+    syncAllAutoFENotes();
+    save(); closeSheet(); renderActive();
+    toast('Aplicado para toda a equipe');
   }
 
   function applyShift(code) {
     if (!sheetCtx) return;
     var emp = sheetCtx.emp, date = sheetCtx.date;
+    if (isClosedStoreEvent(code)) {
+      var othersDiff = state.employees.some(function (e) {
+        return e !== emp && ((state.schedule[date] || {})[e] || '') !== code;
+      });
+      if (othersDiff) {
+        var evName = getShift(code).name;
+        showDialog({
+          title: '🏬 ' + evName,
+          body: '<strong>' + escapeHtml(fmtLong(new Date(date + 'T00:00:00'))) + '</strong><br><br>Deseja aplicar <strong>' + escapeHtml(evName) + '</strong> para toda a equipe neste dia?',
+          confirmText: 'Toda a equipe',
+          isDanger: false,
+          extraText: 'Só ' + emp,
+          onConfirm: function () { commitShiftAllTeam(date, code); },
+          onExtra: function () { commitShift(emp, date, code); }
+        });
+        return;
+      }
+    }
     if (code === 'FE' || isWorkShift(code)) {
       var ws = getWarningsForCell(emp, date, code);
       if (ws.length) {
@@ -1456,6 +2187,7 @@
           });
           if (Object.keys(state.schedule[key]).length === 0) delete state.schedule[key];
         }
+        syncAllAutoFENotes();
         save(); renderActive(); toast('Escala gerada.');
       }
     });
@@ -1530,6 +2262,7 @@
         }
       }
       if (!imported) return toast('Nenhum colaborador reconhecido.');
+      syncAllAutoFENotes();
       save(); renderActive(); toast('Backup restaurado!');
     };
     reader.readAsText(file);
@@ -1650,6 +2383,7 @@
       return;
     }
     s[field] = value;
+    if (field === 'color') s.text = getContrastColor(value);
     if (field === 'end' && s.type === 'work') s.name = s.start + ' – ' + value;
     save();
   }
@@ -2097,11 +2831,13 @@
   $('prevBtn').addEventListener('click', function () {
     if (activeView === 'week') currentDate = new Date(currentDate.getTime() - 7 * 86400000);
     else currentDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1);
+    drawerState.day = ''; drawerState.editing = null;
     renderActive();
   });
   $('nextBtn').addEventListener('click', function () {
     if (activeView === 'week') currentDate = new Date(currentDate.getTime() + 7 * 86400000);
     else currentDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1);
+    drawerState.day = ''; drawerState.editing = null;
     renderActive();
   });
   tabsEl.addEventListener('click', function (e) {
@@ -2111,11 +2847,86 @@
   $('printBtn').addEventListener('click', requestPrint);
   $('pngBtn').addEventListener('click', requestPNGExport);
 
+  var feHoverTipEl = $('feHoverTip');
+  var feHoverTarget = null;
+  function hideFEHoverTip() {
+    feHoverTarget = null;
+    if (!feHoverTipEl) return;
+    feHoverTipEl.classList.remove('show', 'below');
+    feHoverTipEl.setAttribute('aria-hidden', 'true');
+  }
+  function showFEHoverTip(cell) {
+    if (!feHoverTipEl || !cell) return;
+    var emp = cell.dataset.emp, date = cell.dataset.date;
+    var info = getFERefInfo(emp, date);
+    if (!info) { hideFEHoverTip(); return; }
+    feHoverTarget = cell;
+    feHoverTipEl.innerHTML =
+      '<div class="fe-tip-head">' +
+        '<span class="fe-tip-title">🏖 Folga de Feriado</span>' +
+        '<span class="fe-tip-pill ' + info.status + '">' + escapeHtml(info.badge) + '</span>' +
+      '</div>' +
+      '<div class="fe-tip-hol">Ref.: ' + escapeHtml(info.holLabel) + '</div>' +
+      '<div class="fe-tip-sub">' + escapeHtml(info.sub) + '</div>';
+    feHoverTipEl.classList.remove('below');
+    feHoverTipEl.classList.add('show');
+    feHoverTipEl.setAttribute('aria-hidden', 'false');
+    var rect = cell.getBoundingClientRect();
+    var tipRect = feHoverTipEl.getBoundingClientRect();
+    var vw = window.innerWidth || document.documentElement.clientWidth || 1024;
+    var left = Math.round(rect.left + rect.width / 2 - tipRect.width / 2);
+    left = Math.max(8, Math.min(left, vw - tipRect.width - 8));
+    var top = Math.round(rect.top - tipRect.height - 10);
+    if (top < 8) {
+      top = Math.round(rect.bottom + 10);
+      feHoverTipEl.classList.add('below');
+    }
+    feHoverTipEl.style.left = left + 'px';
+    feHoverTipEl.style.top = top + 'px';
+  }
+  [viewWeek, viewMonth].forEach(function (vEl) {
+    vEl.addEventListener('pointerover', function (e) {
+      var cell = e.target.closest('[data-fe-ref]');
+      if (!cell) return;
+      if (cell !== feHoverTarget) showFEHoverTip(cell);
+    });
+    vEl.addEventListener('pointerout', function (e) {
+      var cell = e.target.closest('[data-fe-ref]');
+      if (!cell) return;
+      if (e.relatedTarget && cell.contains(e.relatedTarget)) return;
+      if (feHoverTarget === cell) hideFEHoverTip();
+    });
+    vEl.addEventListener('focusin', function (e) {
+      var cell = e.target.closest('[data-fe-ref]');
+      if (cell) showFEHoverTip(cell);
+    });
+    vEl.addEventListener('focusout', function (e) {
+      var cell = e.target.closest('[data-fe-ref]');
+      if (cell && feHoverTarget === cell) hideFEHoverTip();
+    });
+  });
+  window.addEventListener('scroll', hideFEHoverTip, true);
+  window.addEventListener('resize', hideFEHoverTip);
+
   viewWeek.addEventListener('click', function (e) {
+    hideFEHoverTip();
+    var op = e.target.closest('[data-open-drawer]');
+    if (op) { openNotesDrawer({ filter: op.dataset.openDrawer === 'alerts' ? 'alerts' : 'all', day: '' }); return; }
+    var head = e.target.closest('.wk-day-head.col-has-note');
+    if (head && head.dataset.dayKey) { openNotesDrawer({ filter: 'all', day: head.dataset.dayKey }); return; }
+    var missHead = e.target.closest('.wk-day-head.missing-essential');
+    if (missHead) { openNotesDrawer({ filter: 'alerts', day: '' }); return; }
     var cell = e.target.closest('.wk-cell');
     if (cell) openSheet(cell.dataset.emp, cell.dataset.date);
   });
   viewMonth.addEventListener('click', function (e) {
+    hideFEHoverTip();
+    var op = e.target.closest('[data-open-drawer]');
+    if (op) { openNotesDrawer({ filter: op.dataset.openDrawer === 'alerts' ? 'alerts' : 'all', day: '' }); return; }
+    var th = e.target.closest('thead th.col-has-note');
+    if (th && th.dataset.dayKey) { openNotesDrawer({ filter: 'all', day: th.dataset.dayKey }); return; }
+    var missTh = e.target.closest('thead th.missing-essential');
+    if (missTh) { openNotesDrawer({ filter: 'alerts', day: '' }); return; }
     var td = e.target.closest('td.cell');
     if (td) openSheet(td.dataset.emp, td.dataset.date);
   });
@@ -2130,12 +2941,34 @@
 
   viewSettings.addEventListener('change', function (e) {
     var t = e.target;
-    if (t.id === 'themeSelect') { setThemePref(t.value); return; }
-    if (t.id === 'teamNameInput') { state.teamName = t.value.trim() || 'Equipe'; save(); renderHeader(); return; }
+    if (t.id === 'teamNameInput') {
+      var newTeamName = t.value.trim() || 'Equipe';
+      t.value = newTeamName;
+      state.teamName = newTeamName;
+      if (currentTeam) {
+        currentTeam.name = newTeamName;
+        userTeams.forEach(function (ut) { if (ut && ut.id === currentTeam.id) ut.name = newTeamName; });
+        sb.from('teams').update({ name: newTeamName }).eq('id', currentTeam.id).then(function () {});
+      }
+      updateHeaderUI();
+      var badge = $('settingsTeamBadge');
+      if (badge) badge.textContent = newTeamName;
+      save();
+      toast('Nome do time atualizado');
+      return;
+    }
     if (t.matches('.limit-config')) { if (!state.limits) state.limits = {}; state.limits[t.dataset.key] = parseInt(t.value, 10); save(); renderActive(); return; }
     if (t.matches('.sun-rule-config')) { state.sundayRule[t.dataset.key] = parseInt(t.value, 10); save(); return; }
-    if (t.matches('.def-shift')) { state.defaultShift[t.dataset.emp] = t.value; save(); return; }
-    if (t.matches('.emp-scale')) { if (!state.employeeScale) state.employeeScale = {}; state.employeeScale[t.dataset.emp] = t.value; save(); return; }
+    if (t.matches('.def-shift')) {
+      var empDef = (t.closest('[data-emp]') && t.closest('[data-emp]').dataset.emp) || t.dataset.emp;
+      if (empDef) { state.defaultShift[empDef] = t.value; save(); }
+      return;
+    }
+    if (t.matches('.emp-scale')) {
+      var empScale = (t.closest('[data-emp]') && t.closest('[data-emp]').dataset.emp) || t.dataset.emp;
+      if (empScale) { if (!state.employeeScale) state.employeeScale = {}; state.employeeScale[empScale] = t.value; save(); }
+      return;
+    }
     if (t.matches('.sunday-color')) { state.colors.SUNDAY = { color: t.value, text: getContrastColor(t.value) }; save(); renderActive(); return; }
     if (t.id === 'importFile') { var f = t.files[0]; if (f) importBackup(f); t.value = ''; return; }
   });
@@ -2146,8 +2979,14 @@
     if (t.matches('.emp-name')) {
       var oldName = row.dataset.emp, newName = t.value.trim();
       if (newName && newName !== oldName) {
-        if (renameEmployee(oldName, newName)) { row.dataset.emp = newName; toast('Nome atualizado'); }
-        else t.value = oldName;
+        if (renameEmployee(oldName, newName)) {
+          row.dataset.emp = newName;
+          var av = row.querySelector('.emp-avatar'); if (av) av.textContent = initialsOf(newName);
+          var delB = row.querySelector('[data-del-emp]'); if (delB) delB.dataset.delEmp = newName;
+          var ds = row.querySelector('.def-shift'); if (ds) ds.dataset.emp = newName;
+          var es = row.querySelector('.emp-scale'); if (es) es.dataset.emp = newName;
+          toast('Nome atualizado');
+        } else t.value = oldName;
       }
       return;
     }
@@ -2156,44 +2995,58 @@
       if (t.matches('.shift-color')) updateShiftField(id, 'color', t.value);
       else if (t.matches('.shift-label')) updateShiftField(id, 'label', t.value);
       else if (t.matches('.shift-start')) updateShiftField(id, 'start', t.value);
-      else if (t.matches('.shift-end')) updateShiftField(id, 'end', t.value);
+      else if (t.matches('.shift-end')) {
+        updateShiftField(id, 'end', t.value);
+        viewSettings.querySelectorAll('.def-shift option[value="' + id + '"]').forEach(function (op) { op.textContent = state.shifts[id].name; });
+      }
       else if (t.matches('.shift-name-input')) updateShiftField(id, 'name', t.value);
     }
   }, true);
 
   viewSettings.addEventListener('click', function (e) {
     var t = e.target;
+    var scatBtn = t.closest('[data-scat]');
+    if (scatBtn) { settingsCat = scatBtn.dataset.scat; renderSettings(); return; }
+    var themeBtn = t.closest('[data-theme-btn]');
+    if (themeBtn) { setThemePref(themeBtn.dataset.themeBtn); return; }
+    var actBtn = t.closest('[data-settings-act]');
+    if (actBtn) {
+      if (actBtn.dataset.settingsAct === 'change-team') window.changeTeam();
+      else if (actBtn.dataset.settingsAct === 'logout') window.doLogout();
+      return;
+    }
     if (t.closest('[data-del-emp]')) { deleteEmployee(t.closest('[data-del-emp]').dataset.delEmp); return; }
     if (t.closest('[data-del-shift]')) { deleteShift(t.closest('[data-del-shift]').dataset.delShift); return; }
-    if (t.closest('[data-del-hol]')) { delete state.holidays[t.closest('[data-del-hol]').dataset.delHol]; save(); renderActive(); return; }
-    if (t.id === 'addEmployeeBtn') { addEmployee(); return; }
-    if (t.id === 'addWorkShiftBtn') { addWorkShift(); return; }
-    if (t.id === 'addEventBtn') { addEvent(); return; }
-    if (t.id === 'btnAuto') { autoFill(); return; }
-    if (t.id === 'forceSyncBtn') {
+    if (t.closest('[data-del-hol]')) { delete state.holidays[t.closest('[data-del-hol]').dataset.delHol]; syncAllAutoFENotes(); save(); renderActive(); return; }
+    if (t.closest('#addEmployeeBtn')) { addEmployee(); return; }
+    if (t.closest('#addWorkShiftBtn')) { addWorkShift(); return; }
+    if (t.closest('#addEventBtn')) { addEvent(); return; }
+    if (t.closest('#btnAuto')) { autoFill(); return; }
+    if (t.closest('#forceSyncBtn')) {
       pendingSave = true; _syncState = 'pending'; updateStorageStatus();
       doSave().then(function () { if (_syncState === 'synced') toast('✓ Sincronizado'); });
       return;
     }
-    if (t.id === 'downloadCsvBtn') { downloadCSV(); return; }
-    if (t.id === 'importBtn') { document.getElementById('importFile').click(); return; }
-    if (t.id === 'addHolBtn') {
+    if (t.closest('#downloadCsvBtn')) { downloadCSV(); return; }
+    if (t.closest('#importBtn')) { document.getElementById('importFile').click(); return; }
+    if (t.closest('#addHolBtn')) {
       var d = document.getElementById('newHolDate').value;
       var n = document.getElementById('newHolName').value.trim() || 'Feriado';
-      if (d) { state.holidays[d] = n; save(); renderActive(); }
+      if (d) { state.holidays[d] = n; syncAllAutoFENotes(); save(); renderActive(); }
       return;
     }
-    if (t.id === 'clearMonthBtn') {
+    if (t.closest('#clearMonthBtn')) {
+      var yC = currentDate.getFullYear(), mC = currentDate.getMonth();
       showDialog({
-        title: 'Limpar Escala', body: 'Apagar toda a escala deste mês?', confirmText: 'Limpar Tudo', isDanger: true, onConfirm: function () {
-          var y = currentDate.getFullYear(), m = currentDate.getMonth(), n = daysInMonth(currentDate);
-          for (var d = 1; d <= n; d++) delete state.schedule[dateKey(y, m, d)];
-          save(); renderActive(); toast('Mês limpo');
+        title: 'Limpar Escala', body: 'Apagar toda a escala de <strong>' + MONTHS[mC] + ' ' + yC + '</strong>?', confirmText: 'Limpar Tudo', isDanger: true, onConfirm: function () {
+          var n = daysInMonth(currentDate);
+          for (var d = 1; d <= n; d++) delete state.schedule[dateKey(yC, mC, d)];
+          syncAllAutoFENotes(); save(); renderActive(); toast('Mês limpo');
         }
       });
       return;
     }
-    if (t.id === 'resetBtn') {
+    if (t.closest('#resetBtn')) {
       showDialog({
         title: 'Apagar Tudo', body: 'Apagar <strong>TODOS os dados</strong>? Ação irreversível.', confirmText: 'Apagar Tudo', isDanger: true, onConfirm: function () {
           state = getDefaultState(); save(); renderActive(); toast('Dados apagados');
@@ -2232,8 +3085,10 @@
       var lbl = dark ? 'Mudar para o tema claro' : 'Mudar para o tema escuro';
       btn.setAttribute('aria-label', lbl); btn.title = lbl;
     }
-    var sel = document.getElementById('themeSelect');
-    if (sel) sel.value = getThemePref();
+    var pref = getThemePref();
+    document.querySelectorAll('[data-theme-btn]').forEach(function (tb) {
+      tb.classList.toggle('active', tb.dataset.themeBtn === pref);
+    });
   }
   function setThemePref(p) {
     try { if (p === 'auto') localStorage.removeItem(THEME_KEY); else localStorage.setItem(THEME_KEY, p); } catch (e) {}
@@ -2253,29 +3108,178 @@
   document.addEventListener('click', function (e) {
     if (!e.target.closest) return;
     var go = e.target.closest('.goto-notes');
-    if (go) { switchToView('notes'); return; }
+    if (go) { closeNotesDrawer(); switchToView('notes'); return; }
     var b = e.target.closest('.issue-item');
     if (!b) return;
     var date = b.dataset.date, emp = b.dataset.emp;
+    closeNotesDrawer();
     if (b.dataset.act === 'sheet' && emp) { openSheet(emp, date); return; }
     currentDate = new Date(date + 'T00:00:00');
     switchToView('week');
   });
 
-  // ---------- Anotações na ficha da célula ----------
+  // ---------- Controle P3 (Resumo + Gaveta) ----------
+  viewSummary.addEventListener('click', function (e) {
+    var chip = e.target.closest('[data-p3-emp]');
+    if (chip) { summaryP3Emp = chip.dataset.p3Emp; renderSummary(); return; }
+    var go = e.target.closest('[data-p3-goto]');
+    if (go) { currentDate = new Date(go.dataset.p3Goto + 'T00:00:00'); switchToView('week'); }
+  });
+
+  // ---------- Gaveta lateral (Opção D + N2) ----------
+  $('notesDrawerBackdrop').addEventListener('click', closeNotesDrawer);
+  $('drawerCloseBtn').addEventListener('click', closeNotesDrawer);
+  $('notesDrawer').addEventListener('click', function (e) {
+    var t = e.target;
+    var p3Chip = t.closest('[data-p3-emp]');
+    if (p3Chip) { summaryP3Emp = p3Chip.dataset.p3Emp; renderNotesDrawer(); return; }
+    var p3Go = t.closest('[data-p3-goto]');
+    if (p3Go) { closeNotesDrawer(); currentDate = new Date(p3Go.dataset.p3Goto + 'T00:00:00'); switchToView('week'); return; }
+    var fBtn = t.closest('[data-drw-filter]');
+    if (fBtn) {
+      drawerState.filter = fBtn.dataset.drwFilter;
+      drawerState.editing = null;
+      renderNotesDrawer();
+      return;
+    }
+    if (t.closest('[data-drw-clear-day]')) {
+      drawerState.day = '';
+      drawerState.editing = null;
+      renderNotesDrawer();
+      return;
+    }
+    if (t.closest('[data-drw-goto-notes]')) {
+      closeNotesDrawer();
+      switchToView('notes');
+      return;
+    }
+    if (t.closest('#drawerNewToggle')) {
+      drawerState.composing = true;
+      var range = getDrawerRange();
+      renderNotesDrawer();
+      var dateInp = $('drwDate');
+      if (dateInp) dateInp.value = drawerState.day || defaultDateInRange(range);
+      var txtInp = $('drwText');
+      if (txtInp) { txtInp.value = ''; txtInp.focus(); }
+      var impInp = $('drwImp');
+      if (impInp) impInp.checked = false;
+      return;
+    }
+    if (t.closest('#drwCancelBtn')) {
+      drawerState.composing = false;
+      renderNotesDrawer();
+      return;
+    }
+    if (t.closest('#drwSaveBtn')) {
+      var dateVal = $('drwDate') ? $('drwDate').value : '';
+      var scopeVal = $('drwScope') ? $('drwScope').value : 'day';
+      var textVal = $('drwText') ? $('drwText').value : '';
+      var impVal = $('drwImp') ? $('drwImp').checked : false;
+      if (!dateVal) { toast('Escolha a data.'); return; }
+      if (!addNote(dateVal, scopeVal === 'day' ? '' : scopeVal.slice(4), textVal, impVal)) {
+        toast('Escreva a anotação antes de salvar.');
+        return;
+      }
+      drawerState.composing = false;
+      drawerState.filter = 'all';
+      var curRange = getDrawerRange();
+      if (dateVal < curRange.start || dateVal > curRange.end) {
+        currentDate = new Date(dateVal + 'T00:00:00');
+        drawerState.day = '';
+      }
+      renderActive();
+      toast('Anotação adicionada');
+      return;
+    }
+    var actBtn = t.closest('[data-drw-act]');
+    if (!actBtn) return;
+    var card = actBtn.closest('.n2-card');
+    if (!card) return;
+    var nDate = card.dataset.date, nId = card.dataset.id, act = actBtn.dataset.drwAct;
+    var note = getNotes(nDate).filter(function (x) { return x.id === nId; })[0];
+    if (!note) return;
+    if (act === 'imp') {
+      updateNote(nDate, nId, { important: !note.important });
+      renderActive();
+    } else if (act === 'cell' && note.emp) {
+      closeNotesDrawer();
+      openSheet(note.emp, nDate);
+    } else if (act === 'edit') {
+      drawerState.editing = { date: nDate, id: nId };
+      renderNotesDrawer();
+    } else if (act === 'cancel') {
+      drawerState.editing = null;
+      renderNotesDrawer();
+    } else if (act === 'save') {
+      var newTxt = ($('drwEditText') ? $('drwEditText').value : '').trim();
+      if (!newTxt) { toast('A anotação não pode ficar vazia.'); return; }
+      updateNote(nDate, nId, { text: newTxt.slice(0, 600), edited: true });
+      drawerState.editing = null;
+      renderActive();
+      toast('Anotação atualizada');
+    } else if (act === 'del') {
+      showDialog({
+        title: 'Excluir anotação', body: 'Excluir esta anotação? Essa ação não pode ser desfeita.', confirmText: 'Excluir', isDanger: true,
+        onConfirm: function () { deleteNote(nDate, nId); renderActive(); toast('Anotação removida'); }
+      });
+    }
+  });
+
+  // ---------- Ficha da célula: fechar, vizinhos e anotações N2 ----------
+  $('sheetCloseBtn').addEventListener('click', closeSheet);
+  $('sheetNeighbors').addEventListener('click', function (e) {
+    var btn = e.target.closest('[data-jump-date]');
+    if (!btn || !sheetCtx) return;
+    openSheet(sheetCtx.emp, btn.dataset.jumpDate);
+  });
+  $('sheetNoteToggle').addEventListener('click', function () {
+    if (!sheetCtx) return;
+    sheetNoteState.composing = !sheetNoteState.composing;
+    renderSheetNotes();
+    if (sheetNoteState.composing && $('noteInput')) $('noteInput').focus();
+  });
+  $('noteCancelBtn').addEventListener('click', function () {
+    sheetNoteState.composing = false;
+    renderSheetNotes();
+  });
   $('noteAddBtn').addEventListener('click', function () {
     if (!sheetCtx) return;
     var scope = $('noteScope').value;
     var ok = addNote(sheetCtx.date, scope === 'day' ? '' : sheetCtx.emp, $('noteInput').value, $('noteImportant').checked);
     if (!ok) { toast('Escreva a anotação antes de adicionar.'); return; }
     $('noteInput').value = ''; $('noteImportant').checked = false;
+    sheetNoteState.composing = false;
     renderSheetNotes(); renderActive(); toast('Anotação adicionada');
   });
   $('sheetNotesList').addEventListener('click', function (e) {
-    var b = e.target.closest('[data-sheet-note-del]');
-    if (!b || !sheetCtx) return;
-    deleteNote(sheetCtx.date, b.dataset.sheetNoteDel);
-    renderSheetNotes(); renderActive(); toast('Anotação removida');
+    var btn = e.target.closest('[data-sheet-note-act]');
+    if (!btn || !sheetCtx) return;
+    var card = btn.closest('.n2-card');
+    if (!card) return;
+    var nId = card.dataset.id, act = btn.dataset.sheetNoteAct, date = sheetCtx.date;
+    var note = getNotes(date).filter(function (x) { return x.id === nId; })[0];
+    if (!note) return;
+    if (act === 'imp') {
+      updateNote(date, nId, { important: !note.important });
+      renderSheetNotes(); renderActive();
+    } else if (act === 'edit') {
+      sheetNoteState.editingId = nId;
+      renderSheetNotes();
+    } else if (act === 'cancel') {
+      sheetNoteState.editingId = null;
+      renderSheetNotes();
+    } else if (act === 'save') {
+      var txt = ($('sheetEditNoteText') ? $('sheetEditNoteText').value : '').trim();
+      if (!txt) { toast('A anotação não pode ficar vazia.'); return; }
+      updateNote(date, nId, { text: txt.slice(0, 600), edited: true });
+      sheetNoteState.editingId = null;
+      renderSheetNotes(); renderActive(); toast('Anotação atualizada');
+    } else if (act === 'del') {
+      showDialog({
+        title: 'Excluir anotação', body: 'Excluir esta anotação? Essa ação não pode ser desfeita.', confirmText: 'Excluir', isDanger: true,
+        onConfirm: function () { deleteNote(date, nId); renderSheetNotes(); renderActive(); toast('Anotação removida'); }
+      });
+    }
   });
 
   // ---------- Aba Notas ----------

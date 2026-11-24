@@ -102,30 +102,77 @@
 </main>
 
 <div class="sheet-backdrop" id="sheetBackdrop"></div>
-<div class="sheet" id="sheet">
+<div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
   <div class="sheet-handle"></div>
   <div class="sheet-head">
-    <h2 id="sheetTitle">—</h2>
-    <p id="sheetSub">—</p>
+    <div class="sheet-head-main">
+      <div class="sheet-title-row">
+        <h2 id="sheetTitle">—</h2>
+        <p id="sheetSub">—</p>
+      </div>
+      <div class="sheet-neighbors" id="sheetNeighbors"></div>
+    </div>
+    <div class="sheet-head-actions">
+      <button type="button" class="sheet-clear" id="sheetClear">Limpar</button>
+      <button type="button" class="sheet-close" id="sheetCloseBtn" aria-label="Fechar">×</button>
+    </div>
   </div>
-  <div class="sheet-section-title" id="workSectionTitle">Turnos de Trabalho</div>
-  <div class="shift-grid" id="workShiftGrid"></div>
-  <div class="sheet-section-title" id="eventSectionTitle">Eventos e Folgas</div>
-  <div class="shift-grid" id="eventShiftGrid"></div>
-  <div class="sheet-section-title" id="notesSectionTitle">Anotações</div>
-  <div class="sheet-notes">
-    <div class="notes-list" id="sheetNotesList"></div>
-    <div class="note-composer">
-      <textarea id="noteInput" class="note-textarea" rows="2" maxlength="600" placeholder="Escreva uma anotação…"></textarea>
-      <div class="note-composer-row">
-        <select id="noteScope" class="note-select"></select>
-        <label class="note-imp"><input type="checkbox" id="noteImportant"> Importante</label>
-        <button type="button" class="note-add" id="noteAddBtn">Adicionar</button>
+  <div class="sheet-body">
+    <div class="sheet-col-shifts">
+      <div class="sheet-section-title" id="workSectionTitle">Turnos de Trabalho</div>
+      <div class="shift-grid" id="workShiftGrid"></div>
+      <div class="sheet-section-title" id="eventSectionTitle">Eventos e Folgas</div>
+      <div class="event-pill-grid" id="eventShiftGrid"></div>
+    </div>
+    <div class="sheet-col-side">
+      <div class="sheet-rule-box hidden" id="sheetRuleHint"></div>
+      <div class="sheet-notes-head">
+        <span class="sheet-section-title" id="notesSectionTitle">Anotações</span>
+        <button type="button" class="sheet-note-toggle" id="sheetNoteToggle">+ Nova nota</button>
+      </div>
+      <div class="sheet-notes">
+        <div class="notes-list" id="sheetNotesList"></div>
+        <div class="note-composer hidden" id="sheetNoteComposer">
+          <textarea id="noteInput" class="note-textarea" rows="2" maxlength="600" placeholder="Escreva uma anotação…"></textarea>
+          <div class="note-composer-row">
+            <select id="noteScope" class="note-select"></select>
+            <label class="note-imp"><input type="checkbox" id="noteImportant"> ★ Prioridade</label>
+            <button type="button" class="drawer-cancel-btn" id="noteCancelBtn">Cancelar</button>
+            <button type="button" class="note-add" id="noteAddBtn">Adicionar</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
-  <button class="sheet-clear" id="sheetClear">Limpar célula</button>
 </div>
+
+<div class="drawer-backdrop" id="notesDrawerBackdrop"></div>
+<aside class="notes-drawer" id="notesDrawer" aria-label="Anotações e alertas">
+  <div class="drawer-head">
+    <div class="drawer-title-wrap">
+      <h2 id="drawerTitle">Anotações da semana</h2>
+      <p id="drawerSub">—</p>
+    </div>
+    <button type="button" class="drawer-close" id="drawerCloseBtn" aria-label="Fechar painel">×</button>
+  </div>
+  <div class="drawer-chips" id="drawerChips"></div>
+  <div class="drawer-body" id="drawerBody"></div>
+  <div class="drawer-foot">
+    <button type="button" class="drawer-new-btn" id="drawerNewToggle">+ Nova anotação</button>
+    <div class="drawer-composer hidden" id="drawerComposer">
+      <div class="drawer-comp-grid">
+        <input type="date" id="drwDate" class="png-date-input">
+        <select id="drwScope" class="note-select"></select>
+      </div>
+      <textarea id="drwText" class="note-textarea" rows="2" maxlength="600" placeholder="Escreva uma anotação…"></textarea>
+      <div class="note-composer-row">
+        <label class="note-imp"><input type="checkbox" id="drwImp"> ★ Prioridade</label>
+        <button type="button" class="drawer-cancel-btn" id="drwCancelBtn">Cancelar</button>
+        <button type="button" class="note-add" id="drwSaveBtn">Salvar</button>
+      </div>
+    </div>
+  </div>
+</aside>
 
 <div class="dialog-backdrop" id="dialogBackdrop">
   <div class="dialog">
@@ -133,12 +180,14 @@
     <div class="body" id="dialogBody"></div>
     <div class="dialog-actions">
       <button class="dialog-cancel" id="dialogCancel">Cancelar</button>
+      <button class="dialog-extra hidden" id="dialogExtra"></button>
       <button class="dialog-confirm" id="dialogConfirm">Confirmar</button>
     </div>
   </div>
 </div>
 
 <div id="toast" class="toast"></div>
+<div id="feHoverTip" class="fe-hover-tip" role="tooltip" aria-hidden="true"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
