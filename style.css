@@ -6,6 +6,7 @@
   --danger:#ef4444; --danger-soft:#fef2f2;
   --success:#16a34a; --success-soft:#f0fdf4;
   --warning:#f59e0b; --warning-soft:#fffbeb;
+  --note-mark:#0f172a;
   --radius:14px; --radius-sm:10px; --radius-lg:20px;
   --shadow-xs:0 1px 2px 0 rgb(0 0 0 / 0.04);
   --shadow-sm:0 1px 3px 0 rgb(0 0 0 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.06);
@@ -177,7 +178,7 @@ main{
 .grid-table thead th.today .day-num-row{padding-top:0;padding-bottom:0}
 
 .wk-day-head.col-has-note,.grid-table thead th.col-has-note{cursor:pointer}
-.wk-day-head.col-has-note::before,.grid-table thead th.col-has-note::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:#3b82f6;z-index:2;pointer-events:none}
+.wk-day-head.col-has-note::before,.grid-table thead th.col-has-note::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--note-mark);z-index:2;pointer-events:none}
 .wk-day-head.col-has-note-imp::before,.grid-table thead th.col-has-note-imp::before{background:#f59e0b}
 .wk-day-head.holiday.col-has-note:not(.col-has-note-imp)::before,.grid-table thead th.holiday.col-has-note:not(.col-has-note-imp)::before{background:#fff}
 .wk-day-head.holiday.col-has-note-imp::before,.grid-table thead th.holiday.col-has-note-imp::before{background:#fbbf24}
@@ -198,13 +199,11 @@ main{
 .wk-cell.col-note-imp:not([style*="background"]):not(.holiday),
 .grid-table td.cell.col-note-imp:not([style*="background"]):not(.holiday){background:#fffdf4}
 
-.has-note::before{content:'';position:absolute;top:0;right:0;width:0;height:0;border-style:solid;border-width:0 11px 11px 0;border-color:transparent #3b82f6 transparent transparent;z-index:2;pointer-events:none}
+.has-note::before{content:'';position:absolute;top:0;right:0;width:0;height:0;border-style:solid;border-width:0 11px 11px 0;border-color:transparent var(--note-mark) transparent transparent;z-index:2;pointer-events:none}
 .has-note.has-note-imp::before{border-color:transparent #f59e0b transparent transparent}
-.holiday.has-note:not(.has-note-imp)::before,
-.wk-cell[style*="#3b82f6"].has-note:not(.has-note-imp)::before,
-.grid-table td.cell[style*="#3b82f6"].has-note:not(.has-note-imp)::before{border-color:transparent #ffffff transparent transparent}
+.holiday.has-note:not(.has-note-imp)::before{border-color:transparent #ffffff transparent transparent}
 .grid-table td.cell.has-note::before{border-width:0 9px 9px 0}
-.has-note.has-error::before,.has-note.has-warning::before,.has-note.has-info::before{left:0;right:auto;border-width:11px 11px 0 0;border-color:#3b82f6 transparent transparent transparent}
+.has-note.has-error::before,.has-note.has-warning::before,.has-note.has-info::before{left:0;right:auto;border-width:11px 11px 0 0;border-color:var(--note-mark) transparent transparent transparent}
 .has-note.has-note-imp.has-error::before,.has-note.has-note-imp.has-warning::before,.has-note.has-note-imp.has-info::before{border-color:#f59e0b transparent transparent transparent}
 .grid-table td.cell.has-note.has-error::before,.grid-table td.cell.has-note.has-warning::before,.grid-table td.cell.has-note.has-info::before{border-width:9px 9px 0 0}
 .sun-count{display:inline-block;font-size:9px;font-weight:700;padding:2px 5px;border-radius:20px;margin-top:3px}
@@ -1009,6 +1008,7 @@ button.topbar-status:active{transform:scale(.97)}
   --danger:#f87171; --danger-soft:#2d1519;
   --success:#4ade80; --success-soft:#0f2a1c;
   --warning:#fbbf24; --warning-soft:#33280b;
+  --note-mark:#ffffff;
   --shadow-xs:0 1px 2px 0 rgb(0 0 0 / 0.35);
   --shadow-sm:0 1px 3px 0 rgb(0 0 0 / 0.45), 0 1px 2px -1px rgb(0 0 0 / 0.45);
   --shadow-md:0 4px 12px -2px rgb(0 0 0 / 0.5), 0 2px 4px -2px rgb(0 0 0 / 0.4);

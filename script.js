@@ -1469,9 +1469,9 @@
             style = 'color:' + (isHoliday(key) ? '#fff' : s.text) + ';';
           } else if (dow === 0) {
             var sunColor = (state.colors.SUNDAY || { color: '#ef4444' }).color;
-            style = 'background:' + sunColor + ';color:#facc15;font-weight:900;';
+            style = 'background:' + sunColor + ';color:#facc15;font-weight:900;--note-mark:' + getContrastColor(sunColor) + ';';
           } else {
-            style = 'background:' + s.color + ';color:' + s.text + ';';
+            style = 'background:' + s.color + ';color:' + s.text + ';--note-mark:' + getContrastColor(s.color) + ';';
           }
         }
         var printTxt = computePrintText(code, dow);
@@ -1536,9 +1536,9 @@
             style = 'color:' + (isHoliday(key) ? '#fff' : s.text) + ';';
           } else if (dow === 0) {
             var sunColor = (state.colors.SUNDAY || { color: '#ef4444' }).color;
-            style = 'background:' + sunColor + ';color:#facc15;font-weight:900;';
+            style = 'background:' + sunColor + ';color:#facc15;font-weight:900;--note-mark:' + getContrastColor(sunColor) + ';';
           } else {
-            style = 'background:' + s.color + ';color:' + s.text + ';';
+            style = 'background:' + s.color + ';color:' + s.text + ';--note-mark:' + getContrastColor(s.color) + ';';
           }
         }
         var printTxt = computePrintText(code, dow);
@@ -1624,9 +1624,9 @@
             style = 'color:' + (isHoliday(key) ? '#fff' : s.text) + ';';
           } else if (dow === 0) {
             var sunColor = (state.colors.SUNDAY || { color: '#ef4444' }).color;
-            style = 'background:' + sunColor + ';color:#facc15;font-weight:900;';
+            style = 'background:' + sunColor + ';color:#facc15;font-weight:900;--note-mark:' + getContrastColor(sunColor) + ';';
           } else {
-            style = 'background:' + s.color + ';color:' + s.text + ';';
+            style = 'background:' + s.color + ';color:' + s.text + ';--note-mark:' + getContrastColor(s.color) + ';';
           }
         }
         var printTxt = computePrintText(code, dow);
